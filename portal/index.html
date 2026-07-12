@@ -8,12 +8,15 @@
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="#/projects">Open WebUI 業務ポータル</a>
-      <span class="environment-label">開発環境 / 固定データ</span>
+      <a class="brand" href="#dashboard">Open WebUI 業務ポータル</a>
+      <nav class="global-nav" aria-label="主導線">
+        <button data-view="dashboard">ダッシュボード</button>
+        <button data-view="projects">案件一覧</button>
+        <button data-view="search">資料検索</button>
+      </nav>
+      <div class="user-area"><span><strong>開発ユーザー</strong> / 開発部 / system_admin</span><details><summary>アカウント</summary><button data-future="ユーザー一覧">ユーザー一覧</button><button data-future="設定">設定</button><button data-future="プロフィール">プロフィール</button><button data-future="ログアウト">ログアウト</button></details></div>
     </header>
-    <main id="app" aria-live="polite">
-      <p class="state">読み込み中です…</p>
-    </main>
+    <main id="app" aria-live="polite"><p class="state">読み込み中です…</p></main>
     <script src="/app.js"></script>
   </body>
 </html>

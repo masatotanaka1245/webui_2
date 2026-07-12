@@ -1,307 +1,62 @@
-const API_ORIGIN = "http://localhost:8000";
-const API_BASE_URL = `${API_ORIGIN}/api/v1`;
+const ORIGIN = "http://localhost:8000";
+const API = `${ORIGIN}/api/v1`;
 const app = document.querySelector("#app");
-
-const projectExtras = {
-  "project-central-library": { field: "公共施設改修", todo: "設計資料の確認", todoStatus: "進行中", csvCount: 1 },
-  "project-river-monitoring": { field: "環境調査", todo: "観測項目の整理", todoStatus: "未着手", csvCount: 0 },
+const extra = {
+  "project-central-library": { field: "公共施設改修", todo: "設計資料の確認", csv: 1 },
+  "project-river-monitoring": { field: "環境調査", todo: "観測項目の整理", csv: 0 },
 };
+const state = { view: location.hash.replace("#", "") || "dashboard", projects: [], id: null, project: null, docs: [], threads: [], threadId: null, tab: "overview", previewId: null, leftOpen: true, chatWidth: Number(localStorage.getItem("portal-chat-width")) || 380, mode: "通常", notice: "", health: null };
 
-const workspace = {
-  projects: [], selectedId: location.hash.replace("#/projects/", ""), project: null, documents: [],
-  threads: [], activeThreadId: null, activeTab: "overview", previewDocumentId: null,
-  answerMode: "通常", health: null, evidenceMessage: "",
-};
+const esc = (v) => String(v ?? "").replace(/[&<>'"]/g, (c) => ({"&":"&amp;","<":"&gt;",">":"&lt;","'":"&#39;",'"':"&quot;"}[c]));
+const date = (v) => v ? new Intl.DateTimeFormat("ja-JP", { dateStyle:"short", timeStyle:"short" }).format(new Date(v)) : "-";
+const bytes = (v) => v < 1024 ? `${v} B` : `${(v / 1024).toFixed(1)} KB`;
+const status = (v) => ({planning:"計画中",active:"進行中",completed:"完了",on_hold:"保留"}[v] || v);
+const docStatus = (v) => ({uploaded:"登録済み",processing:"処理中",ready:"利用可能",failed:"失敗"}[v] || v);
+const ragStatus = (v) => ({not_started:"未開始",pending:"同期準備中",processing:"同期中",synced:"同期済み",failed:"同期失敗"}[v] || v);
+const info = (id) => extra[id] || { field:"未設定", todo:"TODO未登録", csv:0 };
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
-  }[character]));
+async function errorOf(response) { let message = `HTTP ${response.status}`; try { message = (await response.json()).error?.message || message; } catch (_) {} const e = new Error(message); e.status = response.status; return e; }
+async function get(path) { const r = await fetch(`${API}${path}`); if (!r.ok) throw await errorOf(r); return r.json(); }
+async function post(path, body) { const r = await fetch(`${API}${path}`, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) }); if (!r.ok) throw await errorOf(r); return r.json(); }
+async function getHealth() { const r = await fetch(`${ORIGIN}/health`); if (!r.ok) throw await errorOf(r); return r.json(); }
+function set(html) { app.innerHTML = html; bind(); }
+function current(project) { return project.id === state.id ? " selected" : ""; }
+
+function projectItem(project, dashboard = false) {
+  const pending = project.document_count - (project.id === state.id ? state.project?.rag_synced_document_count || 0 : 0);
+  return `<button class="project-item${current(project)}" data-project="${project.id}"><span class="initial">${esc(project.name).slice(0,1)}</span><span class="project-main"><strong>${esc(project.name)}</strong><small>${esc(project.code)} · ${status(project.status)}</small>${dashboard ? `<small>${esc(info(project.id).field)} / ${esc(project.location)}</small>` : `<small>更新 ${date(project.updated_at)}</small>`}</span><span class="project-badge">${dashboard ? `未処理 ${Math.max(0,pending)} / TODO` : status(project.status)}</span></button>`;
 }
-
-function formatDate(value) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("ja-JP", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+function headerState() { document.querySelectorAll(".global-nav button").forEach((b) => b.classList.toggle("current", b.dataset.view === state.view)); }
+function dashboard() {
+  const p = state.project;
+  const overview = state.projects.length ? `${state.projects.filter((x)=>x.status === "active").length} 件` : "-";
+  return `<section class="dashboard"><section class="dash-left"><div class="page-title"><p>ダッシュボード</p><h1>業務の全体概要</h1></div><dl class="summary-metrics"><div><dt>稼働中案件</dt><dd>${overview}</dd></div><div><dt>資料件数</dt><dd>${state.projects.reduce((n,x)=>n+x.document_count,0)} 件</dd></div><div><dt>注意事項</dt><dd>同期状態を確認</dd></div></dl><section><h2>案件一覧</h2><div class="dashboard-projects">${state.projects.map((x)=>projectItem(x,true)).join("") || `<p>案件がありません。</p>`}</div></section><section><h2>最近追加された資料</h2>${p?.recent_documents?.length ? `<ul class="recent">${p.recent_documents.map((x)=>`<li>${esc(x.name)} <small>${date(x.updated_at)}</small></li>`).join("")}</ul>` : `<p class="empty">選択案件の最近の資料はありません。</p>`}</section></section><section class="dash-detail">${p ? dashboardDetail(p) : `<div class="empty-panel">案件を選択してください。</div>`}</section></section>`;
 }
-
-function formatBytes(sizeBytes) {
-  if (sizeBytes < 1024) return `${sizeBytes} B`;
-  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
-  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function statusLabel(status) {
-  return { planning: "計画中", active: "進行中", completed: "完了", on_hold: "保留" }[status] ?? status;
-}
-
-function documentStatusLabel(status) {
-  return { uploaded: "登録済み", processing: "処理中", ready: "利用可能", failed: "失敗" }[status] ?? status;
-}
-
-function ragStatusLabel(status) {
-  return { not_started: "未開始", pending: "同期準備中", processing: "同期中", synced: "同期済み", failed: "同期失敗" }[status] ?? status;
-}
-
-async function responseError(response) {
-  let message = `HTTP ${response.status}`;
-  try { message = (await response.json()).error?.message ?? message; } catch (_) { /* safe fallback */ }
-  const error = new Error(message); error.status = response.status; return error;
-}
-
-async function fetchJson(path) {
-  const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) throw await responseError(response);
-  return response.json();
-}
-
-async function postJson(path, body) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  if (!response.ok) throw await responseError(response);
-  return response.json();
-}
-
-async function health() {
-  const response = await fetch(`${API_ORIGIN}/health`);
-  if (!response.ok) throw await responseError(response);
-  return response.json();
-}
-
-function setView(html) { app.innerHTML = html; }
-
-function projectExtra(projectId) {
-  return projectExtras[projectId] ?? { field: "未設定", todo: "TODO未登録", todoStatus: "未着手", csvCount: 0 };
-}
-
-function projectList() {
-  if (!workspace.projects.length) return `<p class="empty-copy">案件がありません。</p>`;
-  return workspace.projects.map((project) => {
-    const extra = projectExtra(project.id);
-    const selected = project.id === workspace.selectedId ? " selected-project" : "";
-    const pending = Math.max(0, project.document_count - (workspace.project?.id === project.id ? workspace.project.rag_synced_document_count : 0));
-    return `<button class="project-list-item${selected}" data-project-id="${project.id}">
-      <span class="project-list-top"><strong>${escapeHtml(project.name)}</strong><span class="status status-${project.status}">${statusLabel(project.status)}</span></span>
-      <span class="project-code">${escapeHtml(project.code)}</span>
-      <span class="project-list-meta">${escapeHtml(extra.field)} / ${escapeHtml(project.location)}</span>
-      <span class="project-list-meta">更新 ${formatDate(project.updated_at)}</span>
-      <span class="project-list-badges"><span>未処理資料 ${pending}件</span><span>TODO: ${escapeHtml(extra.todo)}</span></span>
-    </button>`;
-  }).join("");
-}
-
-function workspaceShell(center, right) {
-  return `<section class="workspace" aria-label="案件統合ワークスペース">
-    <aside class="workspace-left"><div class="panel-title"><div><p class="eyebrow">案件</p><h2>案件一覧</h2></div><span>${workspace.projects.length} 件</span></div><div id="project-list">${projectList()}</div></aside>
-    <main class="workspace-center">${center}</main>
-    <aside class="workspace-right">${right}</aside>
-  </section>`;
-}
-
-function loadingWorkspace() {
-  setView(workspaceShell(`<section class="workspace-state"><h1>案件を読み込み中です…</h1><p>中央ワークスペースを準備しています。</p></section>`, `<section class="workspace-state"><h2>AIチャット</h2><p>読み込み中です…</p></section>`));
-}
-
-function errorWorkspace(error) {
-  setView(workspaceShell(`<section class="workspace-state error"><h1>案件情報を表示できません</h1><p>${escapeHtml(error.message)}</p><button class="button" data-action="reload">再読み込み</button></section>`, `<section class="workspace-state error"><h2>AIチャット</h2><p>backendへの接続を確認してください。</p></section>`));
-  bindWorkspaceEvents();
-}
-
-function tabs() {
-  const items = [
-    ["overview", "概要"], ["documents", "資料"], ["csv", "CSVデータ"], ["notes", "資料メモ"],
-    ["comments", "コメント"], ["faq", "FAQ"], ["members", "メンバー"], ["jobs", "成果物・ジョブ"],
-  ];
-  if (workspace.previewDocumentId) {
-    const document = workspace.documents.find((item) => item.id === workspace.previewDocumentId);
-    if (document) items.splice(2, 0, ["preview", document.filename]);
-  }
-  return `<nav class="workspace-tabs" aria-label="案件ワークスペースのタブ">${items.map(([id, label]) => `<button class="workspace-tab ${workspace.activeTab === id ? "active-tab" : ""}" data-tab="${id}">${escapeHtml(label)}</button>`).join("")}</nav>`;
-}
-
-function metric(label, value) { return `<div class="metric"><dt>${label}</dt><dd>${value}</dd></div>`; }
-
-function overviewPanel(project) {
-  const extra = projectExtra(project.id);
-  return `<section class="tab-panel"><div class="project-heading"><div><p class="eyebrow">${escapeHtml(project.code)}</p><h1>${escapeHtml(project.name)}</h1><p>${escapeHtml(project.overview)}</p></div><span class="status status-${project.status}">${statusLabel(project.status)}</span></div>
-    <dl class="metrics-grid">${metric("分野", escapeHtml(extra.field))}${metric("所在地", escapeHtml(project.location))}${metric("期間", escapeHtml(project.period))}${metric("資料", `${project.document_count} 件`)}${metric("CSV", `${extra.csvCount} 件`)}${metric("スレッド", `${workspace.threads.length} 件`)}${metric("進行中TODO", `${escapeHtml(extra.todo)} / ${extra.todoStatus}`)}${metric("最近の更新", formatDate(project.updated_at))}</dl>
-    <section class="compact-section"><h2>最近の更新</h2>${project.recent_documents.length || project.recent_chats.length ? `<ul class="activity-list">${[...project.recent_documents, ...project.recent_chats].slice(0, 5).map((item) => `<li><strong>${escapeHtml(item.name ?? item.title)}</strong><span>${formatDate(item.updated_at)}</span></li>`).join("")}</ul>` : `<p class="empty-copy">最近の更新はありません。</p>`}</section></section>`;
-}
-
-function documentRow(document) {
-  const isSelected = document.id === workspace.previewDocumentId ? " selected-document" : "";
-  const syncButton = document.rag_sync_status === "synced"
-    ? `<span class="sync-date">同期済み ${formatDate(document.rag_synced_at)}</span>`
-    : `<button class="minor-button" data-action="sync" data-document-id="${document.id}">${document.rag_sync_status === "failed" ? "同期を再実行" : "Knowledge同期"}</button>`;
-  return `<tr class="${isSelected}" data-action="preview" data-document-id="${document.id}"><td><strong>${escapeHtml(document.filename)}</strong>${document.error_message ? `<p class="document-error">${escapeHtml(document.error_message)}</p>` : ""}${document.rag_sync_error ? `<p class="document-error">${escapeHtml(document.rag_sync_error)}</p>` : ""}</td><td>v1</td><td>${formatDate(document.created_at)}</td><td>${escapeHtml(document.uploaded_by)}</td><td><span class="status status-${document.status}">${documentStatusLabel(document.status)}</span></td><td><span class="status status-rag-${document.rag_sync_status}">${ragStatusLabel(document.rag_sync_status)}</span><div>${syncButton}</div></td></tr>`;
-}
-
-function documentsPanel() {
-  return `<section class="tab-panel"><div class="tab-heading"><div><h1>資料</h1><p>案件資料を登録し、Knowledge同期状態を確認します。</p></div><span>${workspace.documents.length} 件</span></div>
-    <form id="document-upload-form" class="upload-bar"><input id="document-file" name="file" type="file" accept=".pdf,.txt,.md,.csv" required><button class="button" type="submit">資料をアップロード</button><span id="upload-status">PDF / TXT / Markdown / CSV、10MBまで</span></form>
-    <div class="table-scroll">${workspace.documents.length ? `<table><thead><tr><th>ファイル名</th><th>版</th><th>登録日時</th><th>登録者</th><th>処理</th><th>RAG同期</th></tr></thead><tbody>${workspace.documents.map(documentRow).join("")}</tbody></table>` : `<section class="empty-state"><h2>資料がありません</h2><p>上の操作から最初の資料を登録してください。</p></section>`}</div>
-    ${workspace.evidenceMessage ? `<p class="evidence-notice">${escapeHtml(workspace.evidenceMessage)}</p>` : ""}</section>`;
-}
-
-function previewPanel() {
-  const document = workspace.documents.find((item) => item.id === workspace.previewDocumentId);
-  if (!document) return documentsPanel();
-  const isPdf = document.filename.toLowerCase().endsWith(".pdf");
-  return `<section class="tab-panel preview-panel"><div class="tab-heading"><div><p class="eyebrow">資料プレビュー</p><h1>${escapeHtml(document.filename)}</h1><p>${isPdf ? "PDF.js連携は次工程で追加します。" : "現在は資料メタデータと選択イベントを表示しています。"}</p></div><button class="minor-button" data-tab="documents">資料一覧へ戻る</button></div><dl class="metrics-grid">${metric("種別", escapeHtml(document.content_type))}${metric("サイズ", formatBytes(document.size_bytes))}${metric("処理", documentStatusLabel(document.status))}${metric("RAG", ragStatusLabel(document.rag_sync_status))}</dl><div class="preview-placeholder"><span aria-hidden="true">▧</span><strong>${isPdf ? "PDFページプレビュー領域" : "資料プレビュー領域"}</strong><p>根拠資料クリックからこのタブを開くイベント境界を実装済みです。</p></div></section>`;
-}
-
-function futurePanel(title, description, layout) {
-  return `<section class="tab-panel"><div class="tab-heading"><div><h1>${title}</h1><p>${description}</p></div><span class="implementation-label">未実装</span></div>${layout}</section>`;
-}
-
-function centerContent() {
-  if (!workspace.project) return `<section class="workspace-state"><h1>案件を選択してください</h1></section>`;
-  let panel;
-  switch (workspace.activeTab) {
-    case "documents": panel = documentsPanel(); break;
-    case "preview": panel = previewPanel(); break;
-    case "csv": panel = futurePanel("CSVデータ", "CSV取込・プレビューの実装前レイアウトです。", `<section class="split-placeholder"><div><h2>CSVファイル一覧</h2><p>案件別のCSV / TSVを表示します。</p></div><div><h2>表形式プレビュー</h2><p>列名、行番号、Text-to-SQL結果、AI指定行ハイライトをここに表示します。</p></div></section>`); break;
-    case "notes": panel = futurePanel("資料メモ", "Markdownで育てる作業用成果品です。", `<section class="split-placeholder"><div><h2>資料メモ一覧</h2><p>版・更新日時・TODO状態を管理します。</p><ul class="todo-lanes"><li>進行中（主レーンは1件）</li><li>未着手</li><li>検証中</li><li>完了</li><li>保留</li></ul></div><div><h2>編集 / プレビュー</h2><p>Markdown編集エリアとプレビューを配置します。</p></div></section>`); break;
-    case "comments": panel = futurePanel("コメント", "案件の検討事項と関係者コメントを記録します。", `<p class="empty-copy">コメントAPIの実装後に時系列表示を追加します。</p>`); break;
-    case "faq": panel = futurePanel("FAQ", "再利用する質問と回答を案件単位で管理します。", `<p class="empty-copy">FAQの登録・Knowledge同期はP2候補です。</p>`); break;
-    case "members": panel = futurePanel("メンバー", "案件ロールとアクセス権を表示します。", `<p class="empty-copy">開発中は固定ユーザーを使用しています。ACL実装時に置き換えます。</p>`); break;
-    case "jobs": panel = futurePanel("成果物・ジョブ", "帳票・CSVなどの成果物と非同期ジョブを追跡します。", `<p class="empty-copy">ジョブID、状態、再実行、失敗理由を追加予定です。</p>`); break;
-    default: panel = overviewPanel(workspace.project);
-  }
-  return `${tabs()}${panel}`;
-}
-
-function citations(message) {
-  if (!message.citations?.length) return "";
-  return `<ul class="citation-list">${message.citations.map((citation) => `<li><button class="citation-link" data-action="citation" data-reference="${escapeHtml(citation.reference ?? "")}"><span>根拠資料</span>${escapeHtml(citation.source_name)}</button></li>`).join("")}</ul>`;
-}
-
-function messages() {
-  const thread = workspace.threads.find((item) => item.id === workspace.activeThreadId);
-  if (!thread) return `<section class="empty-state chat-empty"><h2>スレッドを選択してください</h2><p>新規チャットから会話を開始できます。</p></section>`;
-  if (!thread.messages.length) return `<section class="empty-state chat-empty"><h2>質問を入力してください</h2><p>案件Knowledgeに同期済みの資料を対象に回答します。</p></section>`;
-  return thread.messages.map((message) => `<article class="chat-message ${message.role === "assistant" ? "assistant-message" : "user-message"}"><p class="message-role">${message.role === "assistant" ? "AI" : "あなた"}</p><div class="message-content">${escapeHtml(message.content).replace(/\n/g, "<br>")}</div>${citations(message)}</article>`).join("");
-}
-
-function chatPanel() {
-  const project = workspace.project;
-  if (!project) return `<section class="workspace-state"><h2>AIチャット</h2><p>案件を選択してください。</p></section>`;
-  const ragReady = Boolean(project.openwebui_knowledge_id) && project.rag_synced_document_count > 0;
-  const mode = workspace.health?.open_webui_client === "live" ? "Live" : "Mock";
-  return `<section class="chat-panel"><header class="chat-panel-header"><div><p class="eyebrow">案件内AIチャット</p><h2>${escapeHtml(project.name)}</h2><p class="chat-context">Knowledge: ${project.openwebui_knowledge_id ? "設定済み" : "未作成"} / 同期資料: ${project.rag_synced_document_count}件 / ${mode}</p></div><button class="icon-button" data-action="collapse-chat" aria-label="チャットパネルを折りたたむ">›</button></header>
-    <div class="thread-controls"><select id="thread-select" aria-label="チャットスレッド"><option value="">スレッドを選択</option>${workspace.threads.map((thread) => `<option value="${thread.id}" ${thread.id === workspace.activeThreadId ? "selected" : ""}>${escapeHtml(thread.title)}</option>`).join("")}</select><button class="minor-button" data-action="new-thread">＋ 新規</button></div>
-    ${ragReady ? "" : `<div class="rag-warning compact"><strong>RAGに利用できる資料がありません。</strong><button class="text-button" data-tab="documents">資料画面でKnowledge同期を実行</button></div>`}
-    <div class="message-list">${messages()}</div>
-    <details class="chat-details"><summary>詳細な処理状態</summary><p>モデル: gemma4:e2b / 回答モード: ${workspace.answerMode} / Open WebUI: ${mode}</p></details>
-    <form id="chat-form" class="chat-composer"><p id="chat-status">${ragReady ? "入力内容を案件資料と照合して回答します。" : "資料同期後に送信できます。"}</p><div><select id="answer-mode" aria-label="回答モード"><option>通常</option><option>図解</option><option>報告書</option></select><textarea id="chat-input" required placeholder="案件について質問してください。" ${ragReady && workspace.activeThreadId ? "" : "disabled"}></textarea></div><div class="composer-actions"><button class="minor-button" type="button" disabled>送信停止</button><button class="button" type="submit" ${ragReady && workspace.activeThreadId ? "" : "disabled"}>送信</button></div></form></section>`;
-}
-
-function renderWorkspace() {
-  setView(workspaceShell(centerContent(), chatPanel()));
-  bindWorkspaceEvents();
-}
-
-async function loadProject(projectId) {
-  workspace.selectedId = projectId;
-  workspace.activeTab = "overview"; workspace.previewDocumentId = null; workspace.activeThreadId = null; workspace.evidenceMessage = "";
-  location.hash = `#/projects/${projectId}`;
-  loadingWorkspace();
-  try {
-    const [project, documents, threads, healthInfo] = await Promise.all([
-      fetchJson(`/projects/${projectId}`), fetchJson(`/projects/${projectId}/documents`),
-      fetchJson(`/projects/${projectId}/chat-threads`), health(),
-    ]);
-    workspace.project = project; workspace.documents = documents.items; workspace.threads = threads.items; workspace.health = healthInfo;
-    renderWorkspace();
-  } catch (error) { errorWorkspace(error); }
-}
-
-async function refreshProject() {
-  if (workspace.selectedId) await loadProject(workspace.selectedId);
-}
-
-function openEvidence(reference) {
-  const document = workspace.documents.find((item) => item.id === reference || item.openwebui_file_id === reference);
-  workspace.evidenceMessage = document ? `根拠資料「${document.filename}」を開きました。` : "根拠の資料メタデータはまだポータルに登録されていません。資料一覧を確認してください。";
-  workspace.previewDocumentId = document?.id ?? null;
-  workspace.activeTab = document ? "preview" : "documents";
-  renderWorkspace();
-}
-
-function bindWorkspaceEvents() {
-  document.querySelectorAll("[data-project-id]").forEach((element) => element.addEventListener("click", () => loadProject(element.dataset.projectId)));
-  document.querySelectorAll("[data-tab]").forEach((element) => element.addEventListener("click", () => { workspace.activeTab = element.dataset.tab; renderWorkspace(); }));
-  document.querySelectorAll('[data-action="preview"]').forEach((element) => element.addEventListener("click", (event) => {
-    if (event.target.closest("button")) return;
-    workspace.previewDocumentId = element.dataset.documentId; workspace.activeTab = "preview"; renderWorkspace();
-  }));
-  document.querySelectorAll('[data-action="sync"]').forEach((element) => element.addEventListener("click", () => syncDocument(element.dataset.documentId)));
-  document.querySelectorAll('[data-action="citation"]').forEach((element) => element.addEventListener("click", () => openEvidence(element.dataset.reference)));
-  document.querySelector('[data-action="new-thread"]')?.addEventListener("click", createThread);
-  document.querySelector("#thread-select")?.addEventListener("change", async (event) => {
-    workspace.activeThreadId = event.target.value || null;
-    if (workspace.activeThreadId) await loadThread(workspace.activeThreadId); else renderWorkspace();
-  });
-  document.querySelector("#document-upload-form")?.addEventListener("submit", uploadDocument);
-  document.querySelector("#chat-form")?.addEventListener("submit", sendMessage);
-  document.querySelector("#answer-mode")?.addEventListener("change", (event) => { workspace.answerMode = event.target.value; });
-  document.querySelector('[data-action="reload"]')?.addEventListener("click", refreshProject);
-  document.querySelector('[data-action="collapse-chat"]')?.addEventListener("click", () => app.classList.toggle("chat-collapsed"));
-}
-
-async function uploadDocument(event) {
-  event.preventDefault();
-  const form = event.currentTarget; const status = document.querySelector("#upload-status"); const button = form.querySelector("button");
-  button.disabled = true; status.textContent = "アップロード中です…";
-  try {
-    const response = await fetch(`${API_BASE_URL}/projects/${workspace.selectedId}/documents`, { method: "POST", body: new FormData(form) });
-    if (!response.ok) throw await responseError(response);
-    status.textContent = "アップロードしました。資料一覧を更新します。"; form.reset(); await refreshProject();
-  } catch (error) { status.textContent = `アップロード失敗: ${error.message}`; button.disabled = false; }
-}
-
-async function syncDocument(documentId) {
-  workspace.evidenceMessage = "Knowledge同期中です…"; renderWorkspace();
-  try { await postJson(`/projects/${workspace.selectedId}/documents/${documentId}/sync`, {}); await refreshProject(); }
-  catch (error) { workspace.evidenceMessage = `Knowledge同期失敗: ${error.message}`; renderWorkspace(); }
-}
-
-async function createThread() {
-  try {
-    const thread = await postJson(`/projects/${workspace.selectedId}/chat-threads`, { title: "新規チャット" });
-    workspace.threads = [thread, ...workspace.threads]; workspace.activeThreadId = thread.id; renderWorkspace();
-  } catch (error) { workspace.evidenceMessage = `スレッド作成失敗: ${error.message}`; renderWorkspace(); }
-}
-
-async function loadThread(threadId) {
-  try {
-    const thread = await fetchJson(`/projects/${workspace.selectedId}/chat-threads/${threadId}`);
-    workspace.threads = workspace.threads.map((item) => item.id === thread.id ? thread : item); renderWorkspace();
-  } catch (error) { workspace.evidenceMessage = `スレッド読込失敗: ${error.message}`; renderWorkspace(); }
-}
-
-async function sendMessage(event) {
-  event.preventDefault();
-  const form = event.currentTarget; const input = document.querySelector("#chat-input"); const status = document.querySelector("#chat-status"); const submit = form.querySelector('[type="submit"]');
-  submit.disabled = true; input.disabled = true; status.textContent = "回答を生成中です…";
-  try {
-    const thread = await postJson(`/projects/${workspace.selectedId}/chat-threads/${workspace.activeThreadId}/messages`, { content: input.value, model_id: "gemma4:e2b" });
-    workspace.threads = workspace.threads.map((item) => item.id === thread.id ? thread : item); input.value = ""; renderWorkspace();
-  } catch (error) { status.textContent = `回答を取得できませんでした: ${error.message}`; submit.disabled = false; input.disabled = false; }
-}
-
-async function boot() {
-  loadingWorkspace();
-  try {
-    const data = await fetchJson("/projects"); workspace.projects = data.items;
-    if (!workspace.projects.length) { setView(workspaceShell(`<section class="workspace-state"><h1>案件がありません</h1></section>`, `<section class="workspace-state"><h2>AIチャット</h2><p>案件を作成してください。</p></section>`)); return; }
-    if (!workspace.projects.some((project) => project.id === workspace.selectedId)) workspace.selectedId = workspace.projects[0].id;
-    await loadProject(workspace.selectedId);
-  } catch (error) { errorWorkspace(error); }
-}
-
-window.addEventListener("hashchange", () => {
-  const projectId = location.hash.replace("#/projects/", "");
-  if (projectId && projectId !== workspace.selectedId) loadProject(projectId);
-});
-boot();
+function dashboardDetail(p) { const x=info(p.id); return `<div class="page-title"><p>${esc(p.code)}</p><h1>${esc(p.name)}</h1><span class="status ${p.status}">${status(p.status)}</span></div><dl class="detail-grid"><div><dt>分野</dt><dd>${esc(x.field)}</dd></div><div><dt>所在地</dt><dd>${esc(p.location)}</dd></div><div><dt>期間</dt><dd>${esc(p.period)}</dd></div><div><dt>資料 / PDF / CSV</dt><dd>${p.document_count} / 0 / ${x.csv}</dd></div><div><dt>スレッド</dt><dd>${state.threads.length}</dd></div></dl><h2>案件概要</h2><p>${esc(p.overview)}</p><h2>最近の更新</h2><p>${date(p.updated_at)}</p><button class="button" data-view="projects">案件一覧画面で開く</button>`; }
+function projectPane() { return `<aside class="project-pane ${state.leftOpen ? "" : "closed"}"><button class="collapse" data-action="toggle-left" title="案件一覧を開閉">${state.leftOpen ? "‹" : "›"}</button>${state.leftOpen ? `<div class="pane-head"><h2>案件一覧</h2><button class="minor" data-future="新規案件登録">＋ 新規</button></div><input id="project-filter" placeholder="案件を検索" aria-label="案件を検索"><select id="status-filter"><option value="">全状態</option><option value="active">進行中</option><option value="planning">計画中</option></select><div id="project-items">${state.projects.map((p)=>projectItem(p)).join("")}</div>` : ""}</aside>`; }
+function tabs() { const main=[["overview","概要"],["materials","資料"],["pdf","PDF"],["csv","CSV"]], admin=[["comments","コメント"],["knowledge","ナレッジ"],["members","メンバー"],["operations","運用メモ"],["jobs","成果物・ジョブ"]]; const all=[...main,...admin]; if(state.previewId){const d=state.docs.find((x)=>x.id===state.previewId);if(d)all.splice(3,0,["preview",d.filename]);} return `<nav class="tabs"><span class="tab-group">${all.slice(0,4).map(tab).join("")}</span><span class="tab-group advanced">${all.slice(4).map(tab).join("")}</span></nav>`; }
+function tab([id,label]) { return `<button class="tab ${state.tab===id?"active":""}" data-tab="${id}">${esc(label)}</button>`; }
+function metric(name,value){return `<div><dt>${name}</dt><dd>${value}</dd></div>`;}
+function overview() { const p=state.project,x=info(p.id); return `<section class="panel"><div class="sticky-project"><div><p>${esc(p.code)}</p><h1>${esc(p.name)}</h1></div><span class="status ${p.status}">${status(p.status)}</span></div><dl class="metrics">${metric("分野",esc(x.field))}${metric("場所",esc(p.location))}${metric("期間",esc(p.period))}${metric("資料",`${p.document_count}件`)}${metric("PDF", "0件")}${metric("CSV",`${x.csv}件`)}${metric("スレッド",`${state.threads.length}件`)}${metric("進行中TODO",esc(x.todo))}</dl><h2>説明</h2><p>${esc(p.overview)}</p><h2>最近の更新</h2><p>${date(p.updated_at)}</p></section>`; }
+function materialRows(kind) { const docs=state.docs.filter((d)=>kind === "pdf" ? d.filename.toLowerCase().endsWith(".pdf") : !d.filename.toLowerCase().endsWith(".pdf")); if(!docs.length)return `<p class="empty">${kind === "pdf" ? "PDF資料" : "資料"}がありません。</p>`; return `<div class="material-layout"><div class="material-list">${docs.map((d)=>`<article class="material-item ${state.previewId===d.id?"selected":""}"><button data-preview="${d.id}" class="material-open"><strong>${esc(d.filename)}</strong><small>v1 · ${date(d.created_at)} · ${esc(d.uploaded_by)}</small><small>${docStatus(d.status)} / RAG ${ragStatus(d.rag_sync_status)}</small></button>${d.rag_sync_status === "synced" ? `<small class="sync-label">同期済み</small>` : `<button class="minor" data-sync="${d.id}">${d.rag_sync_status === "failed" ? "同期を再実行" : "Knowledge同期"}</button>`}</article>`).join("")}</div><div class="material-preview"><strong>プレビュー</strong><p>資料を選択するとここに表示します。</p></div></div>`; }
+function materials() { return `<section class="panel"><div class="panel-title"><div><h1>資料</h1><p>会話しながら育てるMarkdown作業資料。</p></div><button class="minor" data-future="資料作成">＋ 新規作成</button></div><div class="todo-strip"><strong>主レーン: 進行中</strong><span>未着手</span><span>検証中</span><span>完了</span><span>保留</span></div>${materialRows("materials")}</section>`; }
+function pdf() { return `<section class="panel"><div class="panel-title"><div><h1>PDF</h1><p>PDF資料とRAG同期状態を管理します。</p></div></div><form id="upload-form" class="upload"><input type="file" name="file" accept=".pdf,.txt,.md,.csv" required><button class="button">アップロード</button><span id="upload-state">最大10MB</span></form>${materialRows("pdf")}</section>`; }
+function csv(){return future("CSV", "CSV一覧、表形式プレビュー、列名・行番号、Text-to-SQL結果をここに表示します。", "CSV取込・解析は未実装です。AI回答の対象行ハイライト用イベント境界を保持します。");}
+function future(title,description,body){return `<section class="panel"><div class="panel-title"><div><h1>${title}</h1><p>${description}</p></div><span class="coming">未実装</span></div><div class="future">${body}</div></section>`;}
+function preview(){const d=state.docs.find((x)=>x.id===state.previewId);if(!d)return pdf();return `<section class="panel"><div class="panel-title"><div><p>動的タブ</p><h1>${esc(d.filename)}</h1></div><button class="minor" data-tab="pdf">PDFへ戻る</button></div><div class="preview"><span>▧</span><strong>資料プレビュー領域</strong><p>PDF.js接続後、根拠ページをここへ表示します。</p></div></section>`;}
+function center(){if(!state.project)return `<section class="empty-panel">案件を選択してください。</section>`;let body={overview,materials,pdf,csv,preview,comments:()=>future("コメント","進捗共有と時系列表示。","コメントAPIを追加予定です。"),knowledge:()=>future("ナレッジ","FAQと再利用可能なQ&A。","Knowledge同期の管理画面を追加予定です。"),members:()=>future("メンバー","manager / member / viewerの将来境界。","正式なACL実装後に有効化します。"),operations:()=>future("運用メモ","README / AGENTS / TODO相当の案件文脈。","版管理付きMarkdownを追加予定です。"),jobs:()=>future("成果物・ジョブ","長時間処理の状態、結果、失敗、再実行。","ジョブ基盤実装後に有効化します。")}[state.tab]||overview;return `<section class="center-pane">${tabs()}${body()}</section>`;}
+function chat(){const p=state.project;if(!p)return `<aside class="chat-pane"><p>案件を選択してください。</p></aside>`;const thread=state.threads.find((x)=>x.id===state.threadId);const ready=p.openwebui_knowledge_id&&p.rag_synced_document_count>0;const messages=thread?.messages?.length?thread.messages.map((m)=>`<article class="msg ${m.role}"><strong>${m.role==="assistant"?"AI":"あなた"}</strong><p>${esc(m.content)}</p>${m.citations?.length?`<div class="citations">${m.citations.map((c)=>`<button data-citation="${esc(c.reference||"")}">根拠: ${esc(c.source_name)}</button>`).join("")}</div>`:""}</article>`).join(""):`<div class="empty">スレッドを選択するか、新規チャットを開始してください。</div>`;return `<aside class="chat-pane"><header><div><p>選択案件専用AIチャット</p><h2>${esc(p.name)}</h2><small>モデル: gemma4:e2b / ${state.health?.open_webui_client||"mock"}</small></div></header><div class="threadbar"><select id="thread-select"><option value="">スレッドを選択</option>${state.threads.map((t)=>`<option value="${t.id}" ${t.id===state.threadId?"selected":""}>${esc(t.title)}</option>`).join("")}</select><button class="minor" data-action="new-thread">＋ 新規</button><button class="minor" disabled>削除</button></div><div class="quick"><button data-quick="データ集計">データ集計</button><button data-quick="資料抽出">資料抽出</button><button data-quick="文脈総括">文脈総括</button></div>${ready?"":`<div class="warning">RAGに利用できる資料がありません。<button data-tab="pdf">PDFでKnowledge同期を実行</button></div>`}<div class="messages">${messages}</div><details><summary>処理詳細</summary><p>案件Knowledge、同期済み資料、回答モードを確認します。</p></details><form id="chat-form" class="composer"><p id="chat-state">${ready?"回答待機中":"資料同期後に送信できます"}</p><div><select id="mode"><option>通常</option><option>図解</option><option>報告書</option><option>CSV化</option><option>フル思考</option></select><textarea id="chat-input" placeholder="案件について質問してください" ${ready&&state.threadId?"":"disabled"}></textarea></div><footer><button class="minor" type="button" disabled>送信停止</button><button class="button" ${ready&&state.threadId?"":"disabled"}>送信</button></footer></form></aside>`;}
+function workspace(){return `<section id="workspace" class="workspace" style="--chat-width:${state.chatWidth}px">${projectPane()}${center()}<div id="resize" class="resize" title="チャット幅を調整"></div>${chat()}</section>`;}
+function search(){return `<section class="search-screen"><div class="page-title"><p>資料検索</p><h1>案件横断の発見・比較・参照</h1></div><form class="search-form"><input placeholder="キーワードで検索"><select><option>全案件</option></select><select><option>全分野</option></select><select><option>全資料種別</option></select><button class="button" type="button">検索</button></form><div class="search-grid"><section><h2>地図・位置情報</h2><div class="map-placeholder">位置情報表示領域</div></section><section><h2>検索結果一覧</h2><p class="empty">検索API実装後に資料一覧を表示します。</p></section><section><h2>資料プレビュー</h2><div class="preview">PDFプレビュー領域</div></section></div></section>`;}
+function render(){headerState();set(state.view==="dashboard"?dashboard():state.view==="projects"?workspace():search());}
+async function select(id){state.id=id;state.tab="overview";state.previewId=null;state.threadId=null;render();try{const [p,d,t,h]=await Promise.all([get(`/projects/${id}`),get(`/projects/${id}/documents`),get(`/projects/${id}/chat-threads`),getHealth()]);state.project=p;state.docs=d.items;state.threads=t.items;state.health=h;render();}catch(e){state.notice=e.message;render();}}
+async function upload(e){e.preventDefault();const form=e.currentTarget, label=document.querySelector("#upload-state");label.textContent="アップロード中…";try{const r=await fetch(`${API}/projects/${state.id}/documents`,{method:"POST",body:new FormData(form)});if(!r.ok)throw await errorOf(r);await select(state.id);}catch(x){label.textContent=`失敗: ${x.message}`;}}
+async function thread(){try{const t=await post(`/projects/${state.id}/chat-threads`,{title:"新規チャット"});state.threads=[t,...state.threads];state.threadId=t.id;render();}catch(e){state.notice=e.message;render();}}
+async function loadThread(id){const t=await get(`/projects/${state.id}/chat-threads/${id}`);state.threads=state.threads.map(x=>x.id===id?t:x);render();}
+async function send(e){e.preventDefault();const input=document.querySelector("#chat-input"), label=document.querySelector("#chat-state");label.textContent="生成中…";try{const t=await post(`/projects/${state.id}/chat-threads/${state.threadId}/messages`,{content:input.value,model_id:"gemma4:e2b"});state.threads=state.threads.map(x=>x.id===t.id?t:x);render();}catch(x){label.textContent=`失敗: ${x.message}`;}}
+async function syncDoc(id){state.notice="Knowledge同期中…";render();try{await post(`/projects/${state.id}/documents/${id}/sync`,{});await select(state.id);}catch(e){state.notice=`同期失敗: ${e.message}`;render();}}
+function citation(ref){const d=state.docs.find(x=>x.id===ref||x.openwebui_file_id===ref);state.previewId=d?.id||null;state.tab=d?.filename.toLowerCase().endsWith(".pdf")?"preview":"materials";state.notice=d?`根拠資料「${d.filename}」を開きました。`:"根拠資料は資料一覧で確認してください。";render();}
+function resize(e){const start=e.clientX,initial=state.chatWidth;const move=(x)=>{state.chatWidth=Math.max(320,Math.min(640,initial-(x.clientX-start)));document.querySelector("#workspace")?.style.setProperty("--chat-width",`${state.chatWidth}px`);};const up=()=>{localStorage.setItem("portal-chat-width",state.chatWidth);window.removeEventListener("pointermove",move);};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up,{once:true});}
+function bind(){document.querySelectorAll("[data-project]").forEach(x=>x.onclick=()=>select(x.dataset.project));document.querySelectorAll("[data-view]").forEach(x=>x.onclick=()=>{state.view=x.dataset.view;location.hash=state.view;render();});document.querySelectorAll("[data-tab]").forEach(x=>x.onclick=()=>{state.tab=x.dataset.tab;render();});document.querySelectorAll("[data-preview]").forEach(x=>x.onclick=()=>{state.previewId=x.dataset.preview;state.tab="preview";render();});document.querySelectorAll("[data-sync]").forEach(x=>x.onclick=()=>syncDoc(x.dataset.sync));document.querySelectorAll("[data-citation]").forEach(x=>x.onclick=()=>citation(x.dataset.citation));document.querySelector('[data-action="toggle-left"]')?.addEventListener("click",()=>{state.leftOpen=!state.leftOpen;render();});document.querySelector('[data-action="new-thread"]')?.addEventListener("click",thread);document.querySelector("#thread-select")?.addEventListener("change",e=>{state.threadId=e.target.value||null;if(state.threadId)loadThread(state.threadId);else render();});document.querySelector("#upload-form")?.addEventListener("submit",upload);document.querySelector("#chat-form")?.addEventListener("submit",send);document.querySelector("#resize")?.addEventListener("pointerdown",resize);document.querySelector("#resize")?.addEventListener("dblclick",()=>{state.chatWidth=380;localStorage.setItem("portal-chat-width",380);render();});document.querySelector("#project-filter")?.addEventListener("input",e=>{const q=e.target.value.toLowerCase();document.querySelectorAll(".project-item").forEach(x=>x.hidden=!x.textContent.toLowerCase().includes(q));});document.querySelectorAll("[data-future]").forEach(x=>x.onclick=()=>alert(`${x.dataset.future}は今後実装します。`));document.querySelectorAll("[data-quick]").forEach(x=>x.onclick=()=>{const i=document.querySelector("#chat-input");if(i){i.value=x.dataset.quick;i.focus();}});}
+async function boot(){try{state.projects=(await get("/projects")).items;if(state.projects.length)await select(state.projects[0].id);else render();}catch(e){set(`<section class="fatal"><h1>読み込みに失敗しました</h1><p>${esc(e.message)}</p></section>`);}}
+window.addEventListener("hashchange",()=>{const v=location.hash.replace("#","");if(["dashboard","projects","search"].includes(v)&&v!==state.view){state.view=v;render();}});boot();
