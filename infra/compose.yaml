@@ -15,5 +15,25 @@ services:
       - open-webui-data:/app/backend/data
     restart: unless-stopped
 
+  backend:
+    build:
+      context: ../backend
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  portal:
+    build:
+      context: ../portal
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   open-webui-data:
