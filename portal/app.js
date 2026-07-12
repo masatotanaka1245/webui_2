@@ -25,11 +25,42 @@ function setView(html) {
 async function fetchJson(path) {
   const response = await fetch(`${API_BASE_URL}${path}`);
   if (!response.ok) {
-    const error = new Error(`HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
+    throw await responseError(response);
   }
   return response.json();
+}
+
+async function responseError(response) {
+  let message = `HTTP ${response.status}`;
+  try {
+    const body = await response.json();
+    message = body.error?.message ?? message;
+  } catch (_) {
+    // A safe generic message is used if the API has no JSON error body.
+  }
+  const error = new Error(message);
+  error.status = response.status;
+  return error;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+  }[character]));
+}
+
+function formatBytes(sizeBytes) {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function documentStatusLabel(status) {
+  return { uploaded: "登録済み", processing: "処理中", ready: "利用可能", failed: "失敗" }[status] ?? status;
+}
+
+function ragStatusLabel(status) {
+  return { not_started: "未開始", pending: "同期中", synced: "同期済み", failed: "同期失敗" }[status] ?? status;
 }
 
 function projectCard(project) {
@@ -93,10 +124,10 @@ async function renderProjectHome(projectId) {
         <div><dt>チャットスレッド</dt><dd>${project.chat_thread_count} 件</dd></div>
       </dl>
       <nav class="action-grid" aria-label="案件操作">
-        <button class="action-card" data-placeholder="資料一覧は次の実装で追加します。"><strong>資料一覧</strong><span>資料の確認・アップロード</span></button>
+        <a class="action-card" href="#/projects/${project.id}/documents"><strong>資料一覧</strong><span>資料の確認・アップロード</span></a>
         <button class="action-card" data-placeholder="案件内チャットは次の実装で追加します。"><strong>案件内チャット</strong><span>新規チャットとスレッド管理</span></button>
       </nav>
-      <p id="placeholder-message" class="assistive-message">資料一覧と案件内チャットは準備中です。</p>
+      <p id="placeholder-message" class="assistive-message">案件内チャットは準備中です。</p>
       <section class="detail-grid">
         <section class="detail-panel"><h2>最近の資料</h2>${recentList(project.recent_documents, "最近の資料はありません。")}</section>
         <section class="detail-panel"><h2>最近のチャット</h2>${recentList(project.recent_chats, "最近のチャットはありません。")}</section>
@@ -116,7 +147,95 @@ async function renderProjectHome(projectId) {
   }
 }
 
+function documentRow(document) {
+  const error = document.error_message
+    ? `<p class="document-error">エラー: ${escapeHtml(document.error_message)}</p>`
+    : "";
+  return `
+    <tr>
+      <td><strong>${escapeHtml(document.filename)}</strong>${error}</td>
+      <td>${escapeHtml(document.content_type)}</td>
+      <td>${formatBytes(document.size_bytes)}</td>
+      <td>${formatDate(document.created_at)}</td>
+      <td><span class="status status-${document.status}">${documentStatusLabel(document.status)}</span></td>
+      <td><span class="status status-rag-${document.rag_sync_status}">${ragStatusLabel(document.rag_sync_status)}</span></td>
+    </tr>`;
+}
+
+async function renderDocuments(projectId) {
+  setView(`<p class="state">資料一覧を読み込み中です…</p>`);
+  try {
+    const [project, documents] = await Promise.all([
+      fetchJson(`/projects/${projectId}`),
+      fetchJson(`/projects/${projectId}/documents`),
+    ]);
+    setView(`
+      <a class="back-link" href="#/projects/${project.id}">← 案件ホームへ戻る</a>
+      <section class="project-home-heading">
+        <div><p class="eyebrow">${project.code}</p><h1>案件資料一覧</h1><p>${project.name}</p></div>
+        <span class="status status-${project.status}">${statusLabel(project.status)}</span>
+      </section>
+      <section class="detail-panel upload-panel">
+        <h2>資料をアップロード</h2>
+        <p>対応形式: PDF、TXT、Markdown、CSV。1ファイル10MBまでです。</p>
+        <form id="document-upload-form">
+          <label class="file-picker" for="document-file">ファイルを選択<input id="document-file" name="file" type="file" accept=".pdf,.txt,.md,.csv" required /></label>
+          <button class="button" type="submit">アップロード</button>
+        </form>
+        <p id="upload-status" class="assistive-message">Open WebUI同期はまだMock Adapterで再現しています。</p>
+      </section>
+      <section class="detail-panel">
+        <h2>登録済み資料</h2>
+        <div id="document-list">${renderDocumentList(documents.items)}</div>
+      </section>
+    `);
+    bindUploadForm(projectId);
+  } catch (error) {
+    if (error.status === 404) {
+      setView(`<section class="state-panel"><h1>案件が見つかりません</h1><p>指定された案件IDは存在しません。</p><a class="button" href="#/projects">案件一覧へ戻る</a></section>`);
+      return;
+    }
+    setView(`<section class="state-panel error"><h1>資料一覧を表示できません</h1><p>${escapeHtml(error.message)}</p><a class="button" href="#/projects/${projectId}">案件ホームへ戻る</a></section>`);
+  }
+}
+
+function renderDocumentList(documents) {
+  if (!documents.length) {
+    return `<section class="empty-state"><h3>資料がありません</h3><p>上のフォームから案件資料を登録してください。</p></section>`;
+  }
+  return `<div class="table-scroll"><table><thead><tr><th>ファイル名</th><th>種別</th><th>サイズ</th><th>登録日時</th><th>処理状態</th><th>RAG同期</th></tr></thead><tbody>${documents.map(documentRow).join("")}</tbody></table></div>`;
+}
+
+function bindUploadForm(projectId) {
+  const form = document.querySelector("#document-upload-form");
+  const status = document.querySelector("#upload-status");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector("button");
+    submit.disabled = true;
+    status.textContent = "アップロード中です…";
+    try {
+      const response = await fetch(`${API_BASE_URL}/projects/${projectId}/documents`, {
+        method: "POST",
+        body: new FormData(form),
+      });
+      if (!response.ok) throw await responseError(response);
+      const uploadedDocument = await response.json();
+      status.textContent = `アップロードが完了しました。処理状態: ${documentStatusLabel(uploadedDocument.status)} / RAG同期: ${ragStatusLabel(uploadedDocument.rag_sync_status)}`;
+      form.reset();
+      const data = await fetchJson(`/projects/${projectId}/documents`);
+      document.querySelector("#document-list").innerHTML = renderDocumentList(data.items);
+    } catch (error) {
+      status.textContent = `アップロードに失敗しました: ${error.message}`;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
 function route() {
+  const documentMatch = location.hash.match(/^#\/projects\/([^/]+)\/documents$/);
+  if (documentMatch) return renderDocuments(documentMatch[1]);
   const match = location.hash.match(/^#\/projects\/([^/]+)$/);
   if (match) return renderProjectHome(match[1]);
   return renderProjectList();

@@ -35,7 +35,7 @@ dt { color: #5a6873; font-size: .82rem; } dd { margin: .15rem 0 0; font-size: .9
 .overview { max-width: 760px; line-height: 1.7; }
 .home-metadata { max-width: 720px; }
 .action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin: 2rem 0 1rem; }
-.action-card { cursor: pointer; text-align: left; border: 1px solid #bad2df; background: #eef7fb; color: #173d50; padding: 1rem; border-radius: 10px; }
+.action-card { cursor: pointer; text-align: left; border: 1px solid #bad2df; background: #eef7fb; color: #173d50; padding: 1rem; border-radius: 10px; text-decoration: none; }
 .action-card:hover, .action-card:focus { outline: 3px solid #2d8098; outline-offset: 2px; }
 .action-card strong, .action-card span { display: block; } .action-card span { margin-top: .3rem; color: #526975; }
 .assistive-message { min-height: 1.5rem; color: #315868; }
@@ -43,4 +43,9 @@ dt { color: #5a6873; font-size: .82rem; } dd { margin: .15rem 0 0; font-size: .9
 .recent-list { list-style: none; padding: 0; margin: 0; }
 .recent-list li { padding: .8rem 0; border-top: 1px solid #e1e8ec; } .recent-list li:first-child { border-top: 0; }
 .recent-list strong, .recent-list span { display: block; } .recent-list span, .empty-copy { color: #596973; font-size: .9rem; margin-top: .25rem; }
+.upload-panel form { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; }
+.file-picker { cursor: pointer; color: #173d50; font-weight: 700; } .file-picker input { display: block; margin-top: .4rem; font-weight: 400; }
+.table-scroll { overflow-x: auto; } table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: .8rem; border-bottom: 1px solid #dce6eb; vertical-align: top; font-size: .9rem; } th { color: #4a5d67; white-space: nowrap; }
+.status-uploaded { background: #e5ecfb; color: #234a9d; } .status-processing, .status-rag-pending { background: #fff0d5; color: #875400; } .status-ready, .status-rag-synced { background: #d9f2e3; color: #17663a; } .status-failed, .status-rag-failed { background: #fde3e2; color: #992722; }
+.document-error { color: #992722; font-size: .82rem; margin: .35rem 0 0; } .empty-state { padding: 1rem 0; color: #596973; }
 @media (max-width: 560px) { .site-header { padding: .85rem 5vw; gap: .8rem; align-items: flex-start; flex-direction: column; } main { padding: 2rem 5vw; } .project-metadata { grid-template-columns: 1fr; } }

@@ -20,6 +20,8 @@ services:
       context: ../backend
     ports:
       - "8000:8000"
+    volumes:
+      - backend-development-data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
@@ -37,3 +39,4 @@ services:
 
 volumes:
   open-webui-data:
+  backend-development-data:

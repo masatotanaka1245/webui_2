@@ -1,10 +1,12 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
 ProjectStatus = Literal["planning", "active", "completed", "on_hold"]
+DocumentStatus = Literal["uploaded", "processing", "ready", "failed"]
+RagSyncStatus = Literal["not_started", "pending", "synced", "failed"]
 
 
 class DevelopmentUser(BaseModel):
@@ -49,3 +51,32 @@ class ProjectListResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     open_webui_client: Literal["mock"]
+
+
+class ProjectDocument(BaseModel):
+    id: str
+    project_id: str
+    filename: str
+    stored_filename: str
+    content_type: str
+    size_bytes: int = Field(ge=1)
+    status: DocumentStatus
+    rag_sync_status: RagSyncStatus
+    uploaded_by: str
+    created_at: datetime
+    updated_at: datetime
+    error_message: str | None = None
+
+
+class ProjectDocumentListResponse(BaseModel):
+    items: list[ProjectDocument]
+
+
+class ApiErrorBody(BaseModel):
+    code: str
+    message: str
+    details: Any | None = None
+
+
+class ApiErrorResponse(BaseModel):
+    error: ApiErrorBody
