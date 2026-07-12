@@ -15,7 +15,8 @@
 2. [画面、利用者操作、業務フロー](open_webui_migration_02_user_flows.md)
 3. [データ、処理、連携の棚卸し](open_webui_migration_03_backend_data.md)
 4. [移行範囲と Open WebUI 実装方針](open_webui_migration_04_target_architecture.md)
-5. [新プロジェクトの Markdown 運用](open_webui_migration_05_project_operations.md)
+
+日常の開発方針、プロジェクト仕様、タスク、障害対応は、リポジトリ直下の `agents.md`、`readme.md`、`todo.md`、`troubleshoot.md` を参照してください。
 
 ## 証跡と参照元
 
@@ -39,4 +40,3 @@
 - 現行 PHP アプリの改修、データ移行、Open WebUI の起動・構築
 - 現行画面のピクセル単位の再現
 - 現行の全ルーティング・プロンプト・ログキーの互換維持
-

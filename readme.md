@@ -45,19 +45,25 @@ flowchart LR
 
 Docker ComposeでOpen WebUI、ポータル、FastAPI、ワーカー、DB等を再現する。Pythonのテスト・Lint・デバッグは業務アプリのコンテナ内で行う。
 
+現時点ではOpen WebUIのみ起動できる。Docker利用端末では次で起動する。
+
+```sh
+docker compose -f infra/compose.yaml up -d
+```
+
+Open WebUIは `http://localhost:3000`、ホストのOllamaは `host.docker.internal:11434` を使用する。
+
 ### DockerなしWindows PC
 
 利用者PCでは既存のOllamaと `open-webui serve` を使う。業務ポータル/APIはOpen WebUIとは別のPython環境で実行し、`start-webui2.ps1` がOllama確認、必要時のOpen WebUI起動、業務アプリ起動をまとめて行う。
 
 標準ポートは Ollama `11434`、Open WebUI `8080`、業務ポータル/API `8000` とする。
 
-## 詳細設計・証跡
+## 一時的な移行調査資料
 
 - [移行資料一覧](docs/open_webui_migration_00_readme.md)
-- [業務ポータル開発計画](docs/frontend_delivery_plan.md)
-- [Docker中心の開発・デバッグ環境計画](docs/docker_development_environment_plan.md)
-- [Open WebUIと業務ポータルの管理方針](docs/runtime_management.md)
-- [DockerなしWindows PCへの配布・起動計画](docs/windows_distribution_plan.md)
+
+`docs/` の移行調査資料は、P0仕様を確定してこのファイルへ必要事項を統合した後に削除する。新しい方針・仕様・タスク・障害対応はルートの4ファイルだけを更新する。
 
 ## 文書の使い分け
 
