@@ -1,47 +1,42 @@
 # 新プロジェクトの Markdown 運用方針
 
-## 推奨リポジトリ構成（提案）
+## 採用したリポジトリ構成
 
 ```text
 new-openwebui-project/
-├── README.md
-├── AGENTS.md
-├── TODO.md
-├── TROUBLESHOOTING.md
+├── readme.md                # プロジェクト仕様
+├── agents.md                # 開発方針
+├── todo.md                  # 開発タスク管理
+├── troubleshoot.md          # 開発時のエラー対応FAQ
 ├── docs/
-│   ├── architecture.md
-│   ├── feature-specs.md
-│   ├── data-model.md
-│   ├── tool-api.md
-│   ├── security.md
-│   └── migration-decisions.md
+│   └── ...                  # 移行調査・承認済み詳細設計の証跡
 ├── backend/                 # FastAPI / worker
 ├── portal/                  # 独自業務フロントエンド
 ├── infra/
 └── openwebui/               # Functions・設定例・Tool登録手順のみ
 ```
 
-## 各Markdownの責務
+## Markdownの責務
 
 | ファイル | 記載すること | 記載しないこと |
 | --- | --- | --- |
-| `README.md` | 全体像、前提、最短起動、環境変数の参照先、検証入口 | 詳細な仕様、作業履歴、秘密情報 |
-| `AGENTS.md` | Plan → Do → Check/Debug → Act、編集・検証・ログ・セキュリティの規則 | プロダクト固有の未決定仕様 |
-| `TODO.md` | Now 1件、Next 最大3件、各項目の完了条件 | 完了済みの作業日誌、調査メモの全文 |
-| `TROUBLESHOOTING.md` | 症状、原因、対処、再発防止、関連ファイル | パスワード、トークン、個人情報、DBダンプ |
-| `docs/` | 判断済みの仕様、境界、API、データ、移行判断 | 一時的な作業ログ |
+| `readme.md` | 全体仕様、構成、対応機能、実行・配布の概要 | 作業履歴、秘密情報 |
+| `agents.md` | Plan → Do → Check/Debug → Act、編集・検証・ログ・セキュリティの規則 | 日々のタスク、障害ログ |
+| `todo.md` | Now 1件、Next 最大3件、各項目の完了条件、Blocked | 完了済みの作業日誌、調査メモの全文 |
+| `troubleshoot.md` | 症状、原因、確認手順、対処、再発防止のFAQ | パスワード、トークン、個人情報、DBダンプ |
+| `docs/` | 移行調査・承認済み詳細設計の証跡。必要な場合だけ `readme.md` からリンクする | 一時的な作業ログ、日々のタスク、障害の一次記録 |
 
 ## TODO.md テンプレート
 
 ```md
-# TODO
+# 開発タスク
 
 更新日: YYYY-MM-DD
 
 ## Now
 
 - [ ] OpenAPI Tool の案件ACL契約を確定する
-  - 完了条件: OpenAPIスキーマ、認可ルール、拒否時レスポンス、テスト観点を `docs/tool-api.md` に記載する。
+  - 完了条件: OpenAPIスキーマ、認可ルール、拒否時レスポンス、テスト観点を `readme.md` または必要な詳細設計に記載する。
 
 ## Next
 
@@ -56,16 +51,12 @@ new-openwebui-project/
 
 ## 作業サイクル
 
-1. **Plan**: 変更種別、対象、成功条件、影響する仕様書を決める。
+1. **Plan**: `readme.md` と `todo.md` を確認し、変更種別、対象、成功条件を決める。
 2. **Do**: 小さく実装し、Open WebUI本体ではなく外部境界を優先する。
 3. **Check / Debug**: API契約、認可、ジョブ失敗、RAG根拠、更新互換性を確認する。
-4. **Act**: 決定事項を `docs/`、再発事項を `TROUBLESHOOTING.md`、次の未完了を `TODO.md` に反映する。
+4. **Act**: 仕様変更を `readme.md`、再発事項を `troubleshoot.md`、次の未完了を `todo.md` に反映する。詳細設計が必要な場合だけ `docs/` を更新する。
 
-## 最初に作るべき資料
+## 詳細設計を追加する条件
 
-- `docs/architecture.md`: コンポーネント、データ境界、認証境界
-- `docs/tool-api.md`: OpenAPI Toolの入出力、認可、非同期ジョブ
-- `docs/data-model.md`: 案件、メンバー、成果物、ジョブ、データカタログ
-- `docs/security.md`: Open WebUIと業務APIのID連携、権限、秘密情報、監査
-- `docs/migration-decisions.md`: 移行する/しない機能と根拠
-
+- `readme.md` に収まらないAPIスキーマ、データモデル、セキュリティ要件、移行判断を確定した場合だけ `docs/` に追加する。
+- 追加した詳細設計は、目的が分かるよう `readme.md` からリンクする。
