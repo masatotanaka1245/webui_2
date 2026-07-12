@@ -11,6 +11,8 @@
 
 この方針により、Open WebUI の更新を業務ポータルのリリースと切り離す。連携契約は公開された設定、OpenAPI Tool、通常のHTTP APIに限定し、Open WebUIの内部DB、非公開API、DOM/CSSセレクタには依存しない。
 
+Open WebUI本体・Ollama・業務ポータルのバージョンと実行環境の管理は、[Open WebUI と業務ポータルの管理方針](runtime_management.md) に従う。
+
 ## 根拠となる既存資料
 
 | 事項 | 参照資料 | 計画への反映 |
