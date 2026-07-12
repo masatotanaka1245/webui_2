@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 ProjectStatus = Literal["planning", "active", "completed", "on_hold"]
 DocumentStatus = Literal["uploaded", "processing", "ready", "failed"]
-RagSyncStatus = Literal["not_started", "pending", "synced", "failed"]
+RagSyncStatus = Literal["not_started", "pending", "processing", "synced", "failed"]
 
 
 class DevelopmentUser(BaseModel):
@@ -42,6 +42,7 @@ class ProjectDetail(ProjectSummary):
     overview: str
     recent_documents: list[RecentDocument]
     recent_chats: list[RecentChat]
+    openwebui_knowledge_id: str | None = None
 
 
 class ProjectListResponse(BaseModel):
@@ -50,7 +51,7 @@ class ProjectListResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"]
-    open_webui_client: Literal["mock"]
+    open_webui_client: Literal["mock", "live"]
 
 
 class ProjectDocument(BaseModel):
@@ -62,6 +63,9 @@ class ProjectDocument(BaseModel):
     size_bytes: int = Field(ge=1)
     status: DocumentStatus
     rag_sync_status: RagSyncStatus
+    openwebui_file_id: str | None = None
+    rag_synced_at: datetime | None = None
+    rag_sync_error: str | None = None
     uploaded_by: str
     created_at: datetime
     updated_at: datetime

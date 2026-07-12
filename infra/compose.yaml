@@ -22,6 +22,10 @@ services:
       - "8000:8000"
     volumes:
       - backend-development-data:/app/data
+    env_file:
+      - ../.env.codex.local
+    environment:
+      OPENWEBUI_INTERNAL_BASE_URL: http://open-webui:8080
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s

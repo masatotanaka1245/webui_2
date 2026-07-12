@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from .dependencies import get_current_development_user
 from .documents import DocumentError, DocumentService, development_upload_dir
-from .open_webui import MockOpenWebUIClient
+from .open_webui import create_open_webui_client
 from .repositories import get_project, list_projects
 from .schemas import (
     ApiErrorResponse,
@@ -26,7 +26,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
-app.state.open_webui_client = MockOpenWebUIClient()
+app.state.open_webui_client = create_open_webui_client()
 app.state.document_service = DocumentService(development_upload_dir(), app.state.open_webui_client)
 
 
@@ -67,13 +67,20 @@ def project_view(project: ProjectDetail) -> ProjectDetail:
         for document in sorted(documents, key=lambda item: item.updated_at, reverse=True)[:3]
     ]
     return project.model_copy(
-        update={"document_count": len(documents), "recent_documents": recent_documents}
+        update={
+            "document_count": len(documents),
+            "recent_documents": recent_documents,
+            "openwebui_knowledge_id": document_service().knowledge_id_for_project(project.id),
+        }
     )
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", open_webui_client="mock")
+    return HealthResponse(
+        status="ok",
+        open_webui_client="mock" if app.state.open_webui_client.__class__.__name__.startswith("Mock") else "live",
+    )
 
 
 @app.get("/api/v1/projects", response_model=ProjectListResponse)
@@ -124,6 +131,37 @@ async def upload_document(
     responses={404: {"model": ApiErrorResponse}},
 )
 def document_detail(
+    project_id: str,
+    document_id: str,
+    _: DevelopmentUser = Depends(get_current_development_user),
+) -> ProjectDocument:
+    project_or_error(project_id)
+    document = document_service().get_document(project_id, document_id)
+    if document is None:
+        raise DocumentError(404, "DOCUMENT_NOT_FOUND", "指定された資料が見つかりません。")
+    return document
+
+
+@app.post(
+    "/api/v1/projects/{project_id}/documents/{document_id}/sync",
+    response_model=ProjectDocument,
+    responses={404: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse}},
+)
+async def sync_document(
+    project_id: str,
+    document_id: str,
+    _: DevelopmentUser = Depends(get_current_development_user),
+) -> ProjectDocument:
+    project = project_or_error(project_id)
+    return await document_service().sync_document(project_id, document_id, project.name)
+
+
+@app.get(
+    "/api/v1/projects/{project_id}/documents/{document_id}/sync-status",
+    response_model=ProjectDocument,
+    responses={404: {"model": ApiErrorResponse}},
+)
+def sync_status(
     project_id: str,
     document_id: str,
     _: DevelopmentUser = Depends(get_current_development_user),

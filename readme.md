@@ -181,7 +181,9 @@ docker compose -f infra/compose.yaml up -d --build
 
 Open WebUIはホストのOllamaを `host.docker.internal:11434` で使用する。
 
-案件資料は開発用の `backend-development-data` Dockerボリュームへ保存し、資料メタデータはbackendプロセス内だけで保持する。backendの再起動後、資料一覧のメタデータは消えるため、この保存方式は開発確認専用である。Open WebUIへのファイル登録、Knowledge作成、RAG同期はまだ行わず、Mock Adapterが `uploaded → processing → ready` と `rag_sync_status: not_started` を返す。
+案件資料は開発用の `backend-development-data` Dockerボリュームへ保存し、資料メタデータと案件/Knowledge ID対応はbackendプロセス内だけで保持する。backendの再起動後、資料一覧と対応メタデータは消えるため、この保存方式は開発確認専用である。
+
+Open WebUI連携は `OPENWEBUI_CLIENT_MODE` で切り替える。既定の `mock` は実通信を行わず、資料同期を `not_started → pending → processing → synced` と再現する。`live` はGit管理外の環境変数から認証情報を読み、Open WebUIの公開APIだけでKnowledge作成、ファイル登録、処理状態取得、Knowledge関連付けを行う。認証情報がない場合は書込み前に安全に失敗する。Knowledge付きチャットとスレッド管理はまだ実装しない。
 
 ### DockerなしWindows PC
 

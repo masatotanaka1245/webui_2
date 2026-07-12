@@ -60,7 +60,7 @@ function documentStatusLabel(status) {
 }
 
 function ragStatusLabel(status) {
-  return { not_started: "未開始", pending: "同期中", synced: "同期済み", failed: "同期失敗" }[status] ?? status;
+  return { not_started: "未開始", pending: "同期準備中", processing: "同期中", synced: "同期済み", failed: "同期失敗" }[status] ?? status;
 }
 
 function projectCard(project) {
@@ -147,18 +147,25 @@ async function renderProjectHome(projectId) {
   }
 }
 
-function documentRow(document) {
+function documentRow(projectId, document) {
   const error = document.error_message
     ? `<p class="document-error">エラー: ${escapeHtml(document.error_message)}</p>`
     : "";
+  const syncError = document.rag_sync_error
+    ? `<p class="document-error">同期エラー: ${escapeHtml(document.rag_sync_error)}</p>`
+    : "";
+  const canSync = document.rag_sync_status !== "synced";
+  const syncButton = canSync
+    ? `<button class="button sync-button" data-project-id="${projectId}" data-document-id="${document.id}">${document.rag_sync_status === "failed" ? "同期を再実行" : "Knowledge同期"}</button>`
+    : `<span class="sync-date">同期日時: ${document.rag_synced_at ? formatDate(document.rag_synced_at) : "-"}</span>`;
   return `
     <tr>
-      <td><strong>${escapeHtml(document.filename)}</strong>${error}</td>
+      <td><strong>${escapeHtml(document.filename)}</strong>${error}${syncError}</td>
       <td>${escapeHtml(document.content_type)}</td>
       <td>${formatBytes(document.size_bytes)}</td>
       <td>${formatDate(document.created_at)}</td>
       <td><span class="status status-${document.status}">${documentStatusLabel(document.status)}</span></td>
-      <td><span class="status status-rag-${document.rag_sync_status}">${ragStatusLabel(document.rag_sync_status)}</span></td>
+      <td><span class="status status-rag-${document.rag_sync_status}">${ragStatusLabel(document.rag_sync_status)}</span><div class="sync-action">${syncButton}</div></td>
     </tr>`;
 }
 
@@ -182,14 +189,15 @@ async function renderDocuments(projectId) {
           <label class="file-picker" for="document-file">ファイルを選択<input id="document-file" name="file" type="file" accept=".pdf,.txt,.md,.csv" required /></label>
           <button class="button" type="submit">アップロード</button>
         </form>
-        <p id="upload-status" class="assistive-message">Open WebUI同期はまだMock Adapterで再現しています。</p>
+        <p id="upload-status" class="assistive-message">最初のKnowledge同期時に、案件用Knowledgeを自動作成します。</p>
       </section>
       <section class="detail-panel">
         <h2>登録済み資料</h2>
-        <div id="document-list">${renderDocumentList(documents.items)}</div>
+        <div id="document-list">${renderDocumentList(project.id, documents.items)}</div>
       </section>
     `);
     bindUploadForm(projectId);
+    bindSyncButtons(projectId);
   } catch (error) {
     if (error.status === 404) {
       setView(`<section class="state-panel"><h1>案件が見つかりません</h1><p>指定された案件IDは存在しません。</p><a class="button" href="#/projects">案件一覧へ戻る</a></section>`);
@@ -199,11 +207,11 @@ async function renderDocuments(projectId) {
   }
 }
 
-function renderDocumentList(documents) {
+function renderDocumentList(projectId, documents) {
   if (!documents.length) {
     return `<section class="empty-state"><h3>資料がありません</h3><p>上のフォームから案件資料を登録してください。</p></section>`;
   }
-  return `<div class="table-scroll"><table><thead><tr><th>ファイル名</th><th>種別</th><th>サイズ</th><th>登録日時</th><th>処理状態</th><th>RAG同期</th></tr></thead><tbody>${documents.map(documentRow).join("")}</tbody></table></div>`;
+  return `<div class="table-scroll"><table><thead><tr><th>ファイル名</th><th>種別</th><th>サイズ</th><th>登録日時</th><th>処理状態</th><th>RAG同期</th></tr></thead><tbody>${documents.map((document) => documentRow(projectId, document)).join("")}</tbody></table></div>`;
 }
 
 function bindUploadForm(projectId) {
@@ -224,12 +232,37 @@ function bindUploadForm(projectId) {
       status.textContent = `アップロードが完了しました。処理状態: ${documentStatusLabel(uploadedDocument.status)} / RAG同期: ${ragStatusLabel(uploadedDocument.rag_sync_status)}`;
       form.reset();
       const data = await fetchJson(`/projects/${projectId}/documents`);
-      document.querySelector("#document-list").innerHTML = renderDocumentList(data.items);
+      document.querySelector("#document-list").innerHTML = renderDocumentList(projectId, data.items);
+      bindSyncButtons(projectId);
     } catch (error) {
       status.textContent = `アップロードに失敗しました: ${error.message}`;
     } finally {
       submit.disabled = false;
     }
+  });
+}
+
+function bindSyncButtons(projectId) {
+  document.querySelectorAll(".sync-button").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const status = document.querySelector("#upload-status");
+      button.disabled = true;
+      status.textContent = "Knowledge同期中です…";
+      try {
+        const response = await fetch(`${API_BASE_URL}/projects/${projectId}/documents/${button.dataset.documentId}/sync`, {
+          method: "POST",
+        });
+        if (!response.ok) throw await responseError(response);
+        const synced = await response.json();
+        status.textContent = `Knowledge同期が完了しました。状態: ${ragStatusLabel(synced.rag_sync_status)}`;
+        const data = await fetchJson(`/projects/${projectId}/documents`);
+        document.querySelector("#document-list").innerHTML = renderDocumentList(projectId, data.items);
+        bindSyncButtons(projectId);
+      } catch (error) {
+        status.textContent = `Knowledge同期に失敗しました: ${error.message}`;
+        button.disabled = false;
+      }
+    });
   });
 }
 
