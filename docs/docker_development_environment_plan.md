@@ -5,7 +5,7 @@
 
 ## 目的と原則
 
-業務ポータル、業務API、ワーカー、データストアを Docker Compose で起動する。開発・テスト・トラブルシュートで動くPythonの実行環境も、原則として同じコンテナイメージに含める。
+業務ポータル、業務API、ワーカー、データストアを Docker Compose で起動する。開発・テスト・トラブルシュートで動くPythonの実行環境も、原則として同じコンテナイメージに含める。DockerなしWindowsへの配布・起動は [DockerなしWindows PCへの配布・起動計画](windows_distribution_plan.md) に従う。
 
 これにより、開発者のホストOSやローカルPythonの差ではなく、Gitで管理するDockerfile・依存関係・Compose設定を再現の基準にする。Open WebUIは公式イメージを無改造で使い、業務アプリとは別コンテナとする。
 
