@@ -27,6 +27,20 @@ class ChatReference:
     title: str
 
 
+@dataclass(frozen=True)
+class ChatCitationReference:
+    source_type: str
+    source_name: str
+    reference: str | None = None
+
+
+@dataclass(frozen=True)
+class ChatCompletion:
+    answer: str
+    citations: list[ChatCitationReference]
+    model_id: str
+
+
 class OpenWebUIClientError(Exception):
     def __init__(self, code: str, message: str):
         self.code = code
@@ -56,7 +70,13 @@ class OpenWebUIClient(ABC):
     async def get_file_processing_status(self, file_id: str) -> str: ...
 
     @abstractmethod
-    async def run_chat(self, knowledge_id: str, message: str) -> str: ...
+    async def chat_with_knowledge(
+        self,
+        project_id: str,
+        knowledge_id: str,
+        messages: list[dict[str, str]],
+        model_id: str,
+    ) -> ChatCompletion: ...
 
     @abstractmethod
     async def list_threads(self, knowledge_id: str) -> list[ChatReference]: ...
@@ -83,8 +103,25 @@ class MockOpenWebUIClient(OpenWebUIClient):
     async def get_file_processing_status(self, file_id: str) -> str:
         return "completed"
 
-    async def run_chat(self, knowledge_id: str, message: str) -> str:
-        return "Mock Open WebUI response. Live RAG is not enabled yet."
+    async def chat_with_knowledge(
+        self,
+        project_id: str,
+        knowledge_id: str,
+        messages: list[dict[str, str]],
+        model_id: str,
+    ) -> ChatCompletion:
+        question = messages[-1]["content"] if messages else ""
+        return ChatCompletion(
+            answer=f"Mock RAG回答です。案件Knowledgeを参照して質問「{question}」を受け付けました。",
+            citations=[
+                ChatCitationReference(
+                    source_type="knowledge",
+                    source_name="Mock同期済み資料",
+                    reference=knowledge_id,
+                )
+            ],
+            model_id=model_id,
+        )
 
     async def list_threads(self, knowledge_id: str) -> list[ChatReference]:
         return [ChatReference(chat_id="mock-chat-1", title="Mock thread")]
@@ -169,8 +206,41 @@ class LiveOpenWebUIClient(OpenWebUIClient):
         if status not in (200, 201):
             raise OpenWebUIClientError("KNOWLEDGE_ATTACH_FAILED", "資料をKnowledgeへ関連付けできません。")
 
-    async def run_chat(self, knowledge_id: str, message: str) -> str:
-        raise OpenWebUIClientError("CHAT_NOT_IMPLEMENTED", "RAGチャットはまだ実装していません。")
+    async def chat_with_knowledge(
+        self,
+        project_id: str,
+        knowledge_id: str,
+        messages: list[dict[str, str]],
+        model_id: str,
+    ) -> ChatCompletion:
+        status, payload = await self._request(
+            "POST",
+            "/api/chat/completions",
+            json_body={
+                "model": model_id,
+                "messages": messages,
+                "files": [{"type": "collection", "id": knowledge_id}],
+                "stream": False,
+            },
+            operation="RAG_CHAT_FAILED",
+        )
+        choices = payload.get("choices", []) if isinstance(payload, dict) else []
+        message = choices[0].get("message", {}) if choices else {}
+        answer = message.get("content") if isinstance(message, dict) else None
+        if status != 200 or not isinstance(answer, str) or not answer.strip():
+            raise OpenWebUIClientError("RAG_CHAT_FAILED", "Open WebUIからRAG回答を取得できません。")
+        citations = []
+        for citation in payload.get("citations", []) if isinstance(payload, dict) else []:
+            if not isinstance(citation, dict):
+                continue
+            citations.append(
+                ChatCitationReference(
+                    source_type="knowledge",
+                    source_name=str(citation.get("source", "Open WebUI Knowledge")),
+                    reference=str(citation.get("document", "")) or None,
+                )
+            )
+        return ChatCompletion(answer=answer, citations=citations, model_id=model_id)
 
     async def list_threads(self, knowledge_id: str) -> list[ChatReference]:
         raise OpenWebUIClientError("THREADS_NOT_IMPLEMENTED", "スレッド一覧はまだ実装していません。")

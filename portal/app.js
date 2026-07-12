@@ -125,19 +125,13 @@ async function renderProjectHome(projectId) {
       </dl>
       <nav class="action-grid" aria-label="案件操作">
         <a class="action-card" href="#/projects/${project.id}/documents"><strong>資料一覧</strong><span>資料の確認・アップロード</span></a>
-        <button class="action-card" data-placeholder="案件内チャットは次の実装で追加します。"><strong>案件内チャット</strong><span>新規チャットとスレッド管理</span></button>
+        <a class="action-card" href="#/projects/${project.id}/chat"><strong>案件内チャット</strong><span>Knowledge付きRAG回答とスレッド管理</span></a>
       </nav>
-      <p id="placeholder-message" class="assistive-message">案件内チャットは準備中です。</p>
       <section class="detail-grid">
         <section class="detail-panel"><h2>最近の資料</h2>${recentList(project.recent_documents, "最近の資料はありません。")}</section>
         <section class="detail-panel"><h2>最近のチャット</h2>${recentList(project.recent_chats, "最近のチャットはありません。")}</section>
       </section>
     `);
-    document.querySelectorAll("[data-placeholder]").forEach((button) => {
-      button.addEventListener("click", () => {
-        document.querySelector("#placeholder-message").textContent = button.dataset.placeholder;
-      });
-    });
   } catch (error) {
     if (error.status === 404) {
       setView(`<section class="state-panel"><h1>案件が見つかりません</h1><p>指定された案件IDは存在しません。</p><a class="button" href="#/projects">案件一覧へ戻る</a></section>`);
@@ -266,7 +260,98 @@ function bindSyncButtons(projectId) {
   });
 }
 
+function chatThreadItem(projectId, thread, activeThreadId) {
+  const active = thread.id === activeThreadId ? " active-thread" : "";
+  return `<a class="thread-item${active}" href="#/projects/${projectId}/chat/${thread.id}"><strong>${escapeHtml(thread.title)}</strong><span>${formatDate(thread.updated_at)}</span></a>`;
+}
+
+function renderCitations(citations) {
+  if (!citations?.length) return "";
+  return `<ul class="citation-list">${citations.map((citation) => `<li><strong>根拠資料:</strong> ${escapeHtml(citation.source_name)}${citation.reference ? ` <span>(${escapeHtml(citation.reference)})</span>` : ""}</li>`).join("")}</ul>`;
+}
+
+function renderMessages(messages) {
+  if (!messages?.length) return `<section class="empty-state"><h3>メッセージはありません</h3><p>下の入力欄から質問を送信してください。</p></section>`;
+  return messages.map((message) => `<article class="chat-message ${message.role === "assistant" ? "assistant-message" : "user-message"}"><p class="message-role">${message.role === "assistant" ? "AI回答" : "あなた"}</p><div class="message-content">${escapeHtml(message.content).replace(/\n/g, "<br>")}</div>${renderCitations(message.citations)}${message.error_message ? `<p class="document-error">${escapeHtml(message.error_message)}</p>` : ""}</article>`).join("");
+}
+
+async function postJson(path, body) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+function chatHeader(project, mode) {
+  const knowledge = project.openwebui_knowledge_id
+    ? `あり (${escapeHtml(project.openwebui_knowledge_id)})`
+    : "未作成";
+  return `<section class="chat-heading"><div><a class="back-link" href="#/projects/${project.id}">← 案件ホームへ戻る</a><p class="eyebrow">${escapeHtml(project.code)}</p><h1>${escapeHtml(project.name)}: AIチャット</h1></div><dl class="chat-context"><div><dt>Knowledge ID</dt><dd>${knowledge}</dd></div><div><dt>RAG同期済み資料</dt><dd>${project.rag_synced_document_count} 件</dd></div><div><dt>モード</dt><dd>${mode}</dd></div><div><dt>使用モデル</dt><dd>gemma4:e2b</dd></div></dl></section>`;
+}
+
+async function renderChat(projectId, threadId = null) {
+  setView(`<p class="state">案件内チャットを読み込み中です…</p>`);
+  try {
+    const [project, threadData, health] = await Promise.all([
+      fetchJson(`/projects/${projectId}`),
+      fetchJson(`/projects/${projectId}/chat-threads`),
+      fetch("http://localhost:8000/health").then(async (response) => {
+        if (!response.ok) throw await responseError(response);
+        return response.json();
+      }),
+    ]);
+    let activeThread = null;
+    if (threadId) activeThread = await fetchJson(`/projects/${projectId}/chat-threads/${threadId}`);
+    const ragReady = Boolean(project.openwebui_knowledge_id) && project.rag_synced_document_count > 0;
+    setView(`${chatHeader(project, health.open_webui_client === "live" ? "Live" : "Mock")}
+      ${ragReady ? "" : `<section class="rag-warning" role="status"><strong>RAGに利用できる資料がありません。</strong><span>資料画面でKnowledge同期を実行してください。</span><a class="button" href="#/projects/${project.id}/documents">資料画面を開く</a></section>`}
+      <section class="chat-layout"><aside class="thread-sidebar"><button id="new-thread" class="button">新規チャット</button><h2>チャットスレッド</h2><div id="thread-list">${threadData.items.length ? threadData.items.map((thread) => chatThreadItem(projectId, thread, threadId)).join("") : `<p class="empty-copy">スレッドはありません。</p>`}</div></aside>
+      <section class="chat-main"><div id="message-list" class="message-list">${activeThread ? renderMessages(activeThread.messages) : `<section class="empty-state"><h2>スレッドを選択してください</h2><p>「新規チャット」から会話を開始できます。</p></section>`}</div>
+      <form id="chat-form" class="chat-form"><label for="chat-input">質問</label><textarea id="chat-input" required maxlength="12000" placeholder="案件資料について質問してください。" ${activeThread && ragReady ? "" : "disabled"}></textarea><button class="button" type="submit" ${activeThread && ragReady ? "" : "disabled"}>送信</button><p id="chat-status" class="assistive-message">${ragReady ? "Knowledge同期済み資料を対象に回答します。" : "資料同期後に送信できます。"}</p></form></section></section>`);
+    document.querySelector("#new-thread").addEventListener("click", async () => {
+      const button = document.querySelector("#new-thread"); button.disabled = true;
+      try {
+        const created = await postJson(`/projects/${projectId}/chat-threads`, { title: "新規チャット" });
+        location.hash = `#/projects/${projectId}/chat/${created.id}`;
+      } catch (error) { button.insertAdjacentHTML("afterend", `<p class="document-error">作成に失敗しました: ${escapeHtml(error.message)}</p>`); button.disabled = false; }
+    });
+    if (activeThread && ragReady) bindChatForm(projectId, activeThread.id);
+  } catch (error) {
+    if (error.status === 404) {
+      setView(`<section class="state-panel"><h1>案件またはスレッドが見つかりません</h1><p>指定されたIDを確認してください。</p><a class="button" href="#/projects/${projectId}">案件ホームへ戻る</a></section>`);
+      return;
+    }
+    setView(`<section class="state-panel error"><h1>案件内チャットを表示できません</h1><p>backendまたはOpen WebUIの接続状態を確認してください。</p><p class="error-detail">状態: ${error.status ?? "接続エラー"}</p><a class="button" href="#/projects/${projectId}">案件ホームへ戻る</a></section>`);
+  }
+}
+
+function bindChatForm(projectId, threadId) {
+  const form = document.querySelector("#chat-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const status = document.querySelector("#chat-status");
+    const input = document.querySelector("#chat-input");
+    const submit = form.querySelector("button");
+    submit.disabled = true; input.disabled = true; status.textContent = "回答を生成中です…";
+    try {
+      await postJson(`/projects/${projectId}/chat-threads/${threadId}/messages`, { content: input.value, model_id: "gemma4:e2b" });
+      const thread = await fetchJson(`/projects/${projectId}/chat-threads/${threadId}`);
+      document.querySelector("#message-list").innerHTML = renderMessages(thread.messages);
+      input.value = ""; status.textContent = "回答を取得しました。";
+    } catch (error) {
+      status.textContent = `回答を取得できませんでした: ${error.message}`;
+    } finally { submit.disabled = false; input.disabled = false; }
+  });
+}
+
 function route() {
+  const chatThreadMatch = location.hash.match(/^#\/projects\/([^/]+)\/chat\/([^/]+)$/);
+  if (chatThreadMatch) return renderChat(chatThreadMatch[1], chatThreadMatch[2]);
+  const chatMatch = location.hash.match(/^#\/projects\/([^/]+)\/chat$/);
+  if (chatMatch) return renderChat(chatMatch[1]);
   const documentMatch = location.hash.match(/^#\/projects\/([^/]+)\/documents$/);
   if (documentMatch) return renderDocuments(documentMatch[1]);
   const match = location.hash.match(/^#\/projects\/([^/]+)$/);

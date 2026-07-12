@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 ProjectStatus = Literal["planning", "active", "completed", "on_hold"]
 DocumentStatus = Literal["uploaded", "processing", "ready", "failed"]
 RagSyncStatus = Literal["not_started", "pending", "processing", "synced", "failed"]
+ChatRole = Literal["user", "assistant"]
 
 
 class DevelopmentUser(BaseModel):
@@ -43,6 +44,7 @@ class ProjectDetail(ProjectSummary):
     recent_documents: list[RecentDocument]
     recent_chats: list[RecentChat]
     openwebui_knowledge_id: str | None = None
+    rag_synced_document_count: int = Field(default=0, ge=0)
 
 
 class ProjectListResponse(BaseModel):
@@ -74,6 +76,46 @@ class ProjectDocument(BaseModel):
 
 class ProjectDocumentListResponse(BaseModel):
     items: list[ProjectDocument]
+
+
+class ChatCitation(BaseModel):
+    source_type: str
+    source_name: str
+    reference: str | None = None
+
+
+class ChatMessage(BaseModel):
+    id: str
+    thread_id: str
+    role: ChatRole
+    content: str
+    citations: list[ChatCitation] = Field(default_factory=list)
+    model_id: str | None = None
+    created_at: datetime
+    error_message: str | None = None
+
+
+class ChatThread(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    messages: list[ChatMessage] = Field(default_factory=list)
+
+
+class ChatThreadListResponse(BaseModel):
+    items: list[ChatThread]
+
+
+class ChatThreadCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+
+
+class ChatMessageCreateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+    model_id: str = Field(default="gemma4:e2b", min_length=1, max_length=120)
 
 
 class ApiErrorBody(BaseModel):

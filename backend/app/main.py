@@ -3,12 +3,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .chats import ChatService
 from .dependencies import get_current_development_user
 from .documents import DocumentError, DocumentService, development_upload_dir
 from .open_webui import create_open_webui_client
 from .repositories import get_project, list_projects
 from .schemas import (
     ApiErrorResponse,
+    ChatMessageCreateRequest,
+    ChatThread,
+    ChatThreadCreateRequest,
+    ChatThreadListResponse,
     DevelopmentUser,
     HealthResponse,
     ProjectDetail,
@@ -28,6 +33,7 @@ app.add_middleware(
 )
 app.state.open_webui_client = create_open_webui_client()
 app.state.document_service = DocumentService(development_upload_dir(), app.state.open_webui_client)
+app.state.chat_service = ChatService(app.state.document_service, app.state.open_webui_client)
 
 
 def api_error(status_code: int, code: str, message: str, details: object | None = None) -> JSONResponse:
@@ -53,6 +59,10 @@ def document_service() -> DocumentService:
     return app.state.document_service
 
 
+def chat_service() -> ChatService:
+    return app.state.chat_service
+
+
 def project_or_error(project_id: str) -> ProjectDetail:
     project = get_project(project_id)
     if project is None:
@@ -71,6 +81,14 @@ def project_view(project: ProjectDetail) -> ProjectDetail:
             "document_count": len(documents),
             "recent_documents": recent_documents,
             "openwebui_knowledge_id": document_service().knowledge_id_for_project(project.id),
+            "rag_synced_document_count": sum(
+                document.rag_sync_status == "synced" for document in documents
+            ),
+            "chat_thread_count": len(chat_service().list_threads(project.id)),
+            "recent_chats": [
+                {"id": thread.id, "title": thread.title, "updated_at": thread.updated_at}
+                for thread in chat_service().list_threads(project.id)[:3]
+            ],
         }
     )
 
@@ -171,3 +189,62 @@ def sync_status(
     if document is None:
         raise DocumentError(404, "DOCUMENT_NOT_FOUND", "指定された資料が見つかりません。")
     return document
+
+
+@app.get(
+    "/api/v1/projects/{project_id}/chat-threads",
+    response_model=ChatThreadListResponse,
+    responses={404: {"model": ApiErrorResponse}},
+)
+def chat_threads(
+    project_id: str,
+    _: DevelopmentUser = Depends(get_current_development_user),
+) -> ChatThreadListResponse:
+    project_or_error(project_id)
+    return ChatThreadListResponse(items=chat_service().list_threads(project_id))
+
+
+@app.post(
+    "/api/v1/projects/{project_id}/chat-threads",
+    response_model=ChatThread,
+    responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+)
+def create_chat_thread(
+    project_id: str,
+    payload: ChatThreadCreateRequest,
+    user: DevelopmentUser = Depends(get_current_development_user),
+) -> ChatThread:
+    project_or_error(project_id)
+    return chat_service().create_thread(project_id, payload.title, user)
+
+
+@app.get(
+    "/api/v1/projects/{project_id}/chat-threads/{thread_id}",
+    response_model=ChatThread,
+    responses={404: {"model": ApiErrorResponse}},
+)
+def chat_thread_detail(
+    project_id: str,
+    thread_id: str,
+    _: DevelopmentUser = Depends(get_current_development_user),
+) -> ChatThread:
+    project_or_error(project_id)
+    thread = chat_service().get_thread(project_id, thread_id)
+    if thread is None:
+        raise DocumentError(404, "CHAT_THREAD_NOT_FOUND", "指定されたチャットスレッドが見つかりません。")
+    return thread
+
+
+@app.post(
+    "/api/v1/projects/{project_id}/chat-threads/{thread_id}/messages",
+    response_model=ChatThread,
+    responses={404: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse}},
+)
+async def create_chat_message(
+    project_id: str,
+    thread_id: str,
+    payload: ChatMessageCreateRequest,
+    _: DevelopmentUser = Depends(get_current_development_user),
+) -> ChatThread:
+    project_or_error(project_id)
+    return await chat_service().add_message(project_id, thread_id, payload.content, payload.model_id)
