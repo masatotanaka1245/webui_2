@@ -55,6 +55,7 @@
 7. 仕様決定は `docs/`、未完了作業は `TODO.md`、障害の再発防止は `TROUBLESHOOTING.md` に記録する。
 8. Open WebUI更新前にステージングで、ログイン、Knowledge、Tool、会話ストリームを回帰確認する。
 9. Open WebUI本体はforkせず、Docker/Pythonの同一固定バージョンを検証して更新する。詳細は `docs/runtime_management.md` に従う。
+10. 業務ポータル/APIの正規の開発・テスト・デバッグ環境はDocker Composeとする。ホストPythonは補助的な解析以外でアプリを起動しない。詳細は `docs/docker_development_environment_plan.md` に従う。
 
 ## 今回の次アクション
 
