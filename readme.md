@@ -101,22 +101,57 @@ flowchart LR
 
 ## Open WebUI公開APIのP0検証
 
-Open WebUIのREST APIは公式資料上でも実験的で、バージョンにより変更され得る。P0実装前に、固定対象バージョンでSwagger（`ENV=dev` の `/docs`）と実機を使い、次を検証して契約化する。APIキー/JWTの権限と、案件ACLを業務APIで再検証できることも各項目の必須条件とする。
+Open WebUIのREST APIは公式資料上でも実験的で、バージョンにより変更され得る。P0実装前に、固定対象バージョンの公開APIだけを検証し、業務APIが案件ACLを再検証できることを必須条件とする。
 
-| 検証項目 | 目的 | 確認観点 |
+### 初回の安全な疎通結果（2026-07-12）
+
+検証対象はローカルOpen WebUI `v0.9.2` である。`GET /health` と `GET /api/config` は成功し、`/api/config` でオンボーディング未完了、ログインフォーム有効、APIキー無効を確認した。認証が必要な候補endpointは、書込みを伴わないリクエストで一律 `401 Not authenticated` を返したため、ネットワーク到達と認証要求までを確認した。初期管理者、APIキー、Knowledge、ファイル、チャットは作成していない。
+
+| 機能 | 公開API | 実機確認 | 使用endpoint | 判定 |
+| --- | --- | --- | --- | --- |
+| 使用中のOpen WebUIバージョン | はい | `v0.9.2` を取得 | `GET /api/config` | 利用可能 |
+| API認証方法 | はい | ログインendpointは必須項目不足で `422`、保護endpointは `401`。APIキーは無効 | `POST /api/v1/auths/signin`、`GET /api/config` | 条件付きで利用可能 |
+| モデル一覧取得 | はい | 認証前は `401` | `GET /api/models` | 条件付きで利用可能 |
+| Knowledgeの作成・一覧・詳細取得 | 候補endpointは公開APIとして到達 | 一覧/作成候補は認証前に `401`。認証後の作成・詳細・ACLは未実施 | `GET /api/v1/knowledge/`、`POST /api/v1/knowledge/create`、`GET /api/v1/knowledge/{id}` | 未確認 |
+| ファイルアップロード | はい | 認証前に `401`。ファイルは未作成 | `POST /api/v1/files/` | 条件付きで利用可能 |
+| ファイル処理状態取得 | はい | ダミーIDで認証前に `401`。実データでは未実施 | `GET /api/v1/files/{id}/process/status` | 条件付きで利用可能 |
+| Knowledgeへのファイル追加 | はい | ダミーIDで認証前に `401`。実データでは未実施 | `POST /api/v1/knowledge/{id}/file/add` | 条件付きで利用可能 |
+| Knowledge付きチャット実行 | はい | 認証前に `401`。モデル実行は未実施 | `POST /api/chat/completions` | 条件付きで利用可能 |
+| チャットスレッドの作成・保存 | 公開候補だが対象版の契約未確定 | 認証前に `401`。作成・保存は未実施 | `POST /api/v1/chats/new`、`POST /api/v1/chats/{id}` | 未確認 |
+| チャット一覧・メッセージ取得 | 公開候補だが対象版の契約未確定 | 認証前に `401`。一覧・詳細は未実施 | `GET /api/v1/chats/`、`GET /api/v1/chats/{id}` | 未確認 |
+
+ファイル登録、処理状態取得、Knowledgeへの追加、Knowledge付きチャット実行は公式API資料に案内がある。チャット永続化の資料には古いバージョン向けの例もあるため、対象版 `v0.9.2` の認証済み実機で再確認するまで本採用しない。公式資料は [API Endpoints](https://docs.openwebui.com/reference/api-endpoints/) と [Backend-Controlled API Flow](https://docs.openwebui.com/reference/api-flow/) を参照する。
+
+### 案件とOpen WebUI IDの対応案
+
+業務DBを案件・ACLの正本とし、Open WebUIのIDは外部リソース参照として保持する。Open WebUIの内部DBは参照・更新しない。
+
+| 業務側の情報 | 対応するOpen WebUI情報 | 用途 |
 | --- | --- | --- |
-| Knowledge作成 | 案件作成時に案件専用Knowledgeを作る | 作成/取得/削除の公開API、所有者、アクセス制御、Knowledge IDの取得 |
-| ファイル登録 | 案件資料をOpen WebUIへ渡す | `POST /api/v1/files/`、ファイルID、形式/容量制限、失敗時のエラー |
-| Knowledgeへのファイル追加 | RAG対象を案件専用Knowledgeに限定する | 処理完了後の `POST /api/v1/knowledge/{id}/file/add`、重複追加、権限エラー |
-| RAG処理状態取得 | ポータルで同期状態を表示する | `GET /api/v1/files/{id}/process/status`、`completed` / `failed` / timeout の扱い |
-| チャット作成 | 案件内の新規スレッドを作る | 公開APIでのchat ID作成、案件Knowledge/モデル/システムプロンプトの関連付け |
-| チャット一覧取得 | 案件内の複数スレッドを表示する | 公開APIでの一覧/検索、案件外スレッドの非表示、ページング |
-| メッセージ保存・取得 | ポータルで会話履歴を表示する | 公開APIでの保存/読出し、ストリーミング後の永続化、編集/再生成の扱い |
-| Knowledge付きチャット実行 | 案件KnowledgeだけをRAG対象に会話する | `POST /api/chat/completions` の `files: [{type: "collection", id: knowledge_id}]`、ストリーミング、根拠情報 |
-| システムプロンプト | 案件ごとにモデル複製なしで指示を適用する | リクエストごとのsystem messageと、Open WebUIのPrompt/Model設定のどちらを採用するか、保存範囲 |
-| Folder / Project対応 | 案件内スレッドを補助的に整理する | 公開APIの有無、Knowledge自動付与の挙動、Folder IDの必要性 |
+| `project.id` | `knowledge_id` | 案件専用Knowledgeの参照 |
+| `project_document.id` | `file_id`、同期状態、同期エラー要約 | 資料とRAG処理の追跡 |
+| `project_chat.id` | `chat_id`、モデルID、システムプロンプト版 | 案件内スレッドの追跡 |
+| `project.id` | 任意の `folder_id` / `project_id` | 対象版で公開APIが確認できた場合だけ補助的に使用 |
+| `project_member` | Open WebUIユーザーIDまたは統合用サービスアカウント | 業務ACLとOpen WebUI認証の対応 |
 
-ファイル登録、処理状態取得、Knowledgeへの追加、Knowledge付きチャット実行は公式API資料に案内がある。一方、Knowledge作成、Folder / Project、チャットとメッセージの永続管理は、対象バージョンの公開APIと権限モデルを検証するまで実装前提にしない。公式資料は [API Endpoints](https://docs.openwebui.com/reference/api-endpoints/) を参照する。
+業務ポータル側は、案件情報、案件コード、状態、メンバー/ロール、上記ID対応、同期/ジョブ状態、操作履歴、承認、成果物メタデータを保持する。システムプロンプトは案件ごとに版管理し、対象版で公開APIの保存方法が確認できるまでは、業務APIがチャット実行時にsystem messageとして適用する方式を候補とする。
+
+### P0設計の変更点と次の最小API契約
+
+- P0の書込み検証と実装の前提に、Open WebUIの統合用認証情報を安全に準備する作業を追加する。APIキーが有効化できる場合は、バックエンドだけが保持する統合用サービスアカウントのキーを使い、ブラウザへ渡さない。APIキーを使えない場合は、JWTの安全な更新・保管と、所有者/ACLの検証方法を先に確定する。
+- チャット一覧・保存・メッセージ取得が対象版の公開APIで完結しない場合、Open WebUIの非公開APIや内部DBで補わない。その場合は、P0のスレッド永続化方式を再設計する。
+- Folder / Projectは必須にしない。案件専用Knowledgeと業務DBのID対応をP0の最小単位とする。
+
+最初に業務APIで契約化する候補は以下である。各endpointは業務ACLを検証した後にのみOpen WebUI公開APIを呼ぶ。
+
+| 業務API | 最小の責務 |
+| --- | --- |
+| `POST /projects` | 案件作成と案件専用Knowledge作成、`knowledge_id` の保存 |
+| `POST /projects/{project_id}/documents` | 資料を1件登録し、`file_id` と同期状態を保存 |
+| `GET /projects/{project_id}/documents/{document_id}/sync-status` | RAG処理状態と利用者向けエラー要約を返す |
+| `POST /projects/{project_id}/chats` | 案件Knowledge・モデル・システムプロンプトを指定してスレッドを作成 |
+| `GET /projects/{project_id}/chats` | 案件に対応するスレッドだけを返す |
+| `POST /projects/{project_id}/chats/{chat_id}/messages` | 権限確認後にKnowledge付きチャットを実行し、ストリーム/結果を返す |
 
 ## 実行・配布
 

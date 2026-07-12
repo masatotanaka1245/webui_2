@@ -52,6 +52,14 @@ docker exec webui_2-open-webui python -c "import urllib.request; print(urllib.re
 
 **対処**: 初回はブラウザで管理者アカウントを作成する。API確認では認証済みセッションまたは適切なAPI認証を使う。未認証401をOllama接続障害として扱わない。
 
+## Open WebUI公開APIの検証が認証前に止まる
+
+**症状**: `/api/models`、`/api/v1/knowledge/`、`/api/v1/files/`、`/api/chat/completions` が `401 Not authenticated` を返す。`/api/config` に `onboarding: true` または `enable_api_keys: false` が表示される。
+
+**原因**: 初期管理者または統合用認証情報が未設定である。APIキーが無効な場合は、APIキーを使ったバックエンド統合もできない。
+
+**対処**: 利用者がOpen WebUIで初期管理者を設定した後、統合用サービスアカウントまたは安全なJWT/APIキー運用を決める。キーやJWTをコード、Git、ログ、Markdownへ記録しない。認証方式を確定するまで、Knowledge・ファイル・チャットの書込み検証を行わない。
+
 ## Open WebUI更新後にログイン状態または画面が不安定になる
 
 **確認**: 固定しているOpen WebUIバージョン、`WEBUI_SECRET_KEY`、ブラウザキャッシュ、更新ログ、データバックアップを確認する。
